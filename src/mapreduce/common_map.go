@@ -1,7 +1,10 @@
 package mapreduce
 
 import (
+	"encoding/json"
 	"hash/fnv"
+	"log"
+	"os"
 )
 
 // doMap manages one map task: it reads one of the input files
@@ -52,7 +55,48 @@ func doMap(
 	//     err := enc.Encode(&kv)
 	//
 	// Remember to close the file after you have written all the values!
-	//
+	file, err := os.Open(inFile) // For read access.
+	//fmt.Println(inFile)
+	if err != nil {
+		log.Fatal("doMap failed to open input file: ", inFile, " error: ", err)
+	}
+	defer file.Close()
+
+	fi, err := file.Stat()
+	if err != nil {
+		log.Fatal("get input file info failed: ", file, " error: ", err)
+	}
+
+	data := make([]byte, fi.Size())
+	_, err = file.Read(data)
+	if err != nil {
+		log.Fatal("read inpufile failed: ", inFile, " error: ", err)
+	}
+
+	kv := mapF(fi.Name(), string(data))
+
+	rFiles := make([]*os.File, nReduce)
+	rEncodes := make([]*json.Encoder, nReduce)
+	for i := 0; i < nReduce; i++ { //创建rReduce个中间文件供reduce步骤读取
+		rFileName := reduceName(jobName, mapTaskNumber, i)
+		rFile, err := os.Create(rFileName)
+		if err != nil {
+			log.Fatal("create middle file failed: ", err)
+		}
+		defer rFile.Close()
+		rFiles[i] = rFile
+		defer rFiles[i].Close()
+		rEncodes[i] = json.NewEncoder(rFiles[i])
+	}
+
+	for _, v := range kv { //遍历经过mapF函数处理得到的中间键值对，分别写入对应的中间文件
+		n := ihash(v.Key) % int(nReduce)
+		err = rEncodes[n].Encode(v) //这里编码进去，在文件中是一行一行的json键值对，而且换行符是标准的LF，在windows下的时候要注意这个问题，windows下的换行符是CRLF，如果要进行文件对比的话注意区分
+		if err != nil {
+			log.Fatal("encode kv failed: ", err)
+		}
+	}
+
 }
 
 func ihash(s string) int {

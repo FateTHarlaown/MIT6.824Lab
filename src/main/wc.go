@@ -2,9 +2,17 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"mapreduce"
 	"os"
+	"strconv"
+	"strings"
+	"unicode"
 )
+
+func sp(c rune) bool {
+	return !unicode.IsLetter(c) && !unicode.IsNumber(c)
+}
 
 //
 // The map function is called once for each file of input. The first
@@ -13,8 +21,18 @@ import (
 // and look only at the contents argument. The return value is a slice
 // of key/value pairs.
 //
-func mapF(filename string, contents string) []mapreduce.KeyValue {
+func mapF(filename string, contents string) (res []mapreduce.KeyValue) {
 	// TODO: you have to write this function
+	words := strings.FieldsFunc(contents, sp)
+	var kv mapreduce.KeyValue
+
+	for _, w := range words {
+		kv.Key = w
+		kv.Value = "1"
+		res = append(res, kv)
+	}
+
+	return res
 }
 
 //
@@ -24,6 +42,20 @@ func mapF(filename string, contents string) []mapreduce.KeyValue {
 //
 func reduceF(key string, values []string) string {
 	// TODO: you also have to write this function
+	var total int = 0
+	for _, i := range values {
+		n, err := strconv.Atoi(i)
+
+		if err != nil {
+			log.Fatal("a word num is invalid!: ", i, " err: ", err) //在测试时使用
+			//continue
+		}
+
+		total += n
+	}
+
+	nstr := strconv.Itoa(total)
+	return nstr
 }
 
 // Can be run in 3 ways:
