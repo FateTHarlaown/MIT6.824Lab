@@ -78,6 +78,7 @@ type Raft struct {
 	//volatile state for leader
 	nextIndex  []uint64
 	matchIndex []uint64
+	beVoted    int
 
 	grantedFor int
 
@@ -136,7 +137,7 @@ func (rf *Raft) readPersist(data []byte) {
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
 	term         uint64
-	candidateId  uint
+	candidateId  int
 	lastLogIndex uint64
 	lastLogTerm  uint64
 }
@@ -225,26 +226,66 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
 
-func handleTimer() {
-	//todo: deal time out event for follower
+func (rf *Raft) handleTimer() {
+	//todo: deal time out event for follower and leader
+	if rf.state == LEADER {
+		//todo: send heartbeat and append antry
+	} else { // start a leader election
+		rf.mu.Lock()
+		rf.state = CANDIDATE
+		rf.beVoted = 1
+		rf.grantedFor = rf.me
+		rf.currentTerm++
+		rf.resetTimer()
+		rf.persist()
+
+		args := RequestVoteArgs{
+			term:         rf.currentTerm,
+			candidateId:  rf.me,
+			lastLogIndex: 0,
+			lastLogTerm:  0,
+		}
+
+		log_num := len(rf.logs)
+		if log_num > 0 {
+			args.lastLogIndex = rf.logs[log_num-1].Index
+			args.lastLogIndex = rf.logs[log_num-1].Term
+		}
+
+		reply_args := RequestVoteReply{}
+
+		for i := 1; i < len(rf.peers); i++ {
+			if i == rf.me {
+				continue
+			}
+
+			go func(sever int, args RequestVoteArgs, reply_args RequestVoteReply) {
+				//todo: send requestvote to others and deal with the reply
+
+			}(i, args, reply_args)
+		}
+	}
 }
 
 func (rf *Raft) resetTimer() {
-	if rf.timer == nil { //there is no timer, create it
-		rf.timer = time.NewTimer(time.Millisecond * 5000)
-		go func() {
-			for {
-				<-rf.timer.C
-				handleTimer()
-			}
-		}()
-	}
-
 	timeOut := time.Duration(HeartBeatTime)
 	if rf.state != LEADER {
 		timeOut = time.Duration(ElectionMinTime + rand.Int63n(ElectionMaxTime-ElectionMinTime))
 	}
+	initchan := make(chan int, 1)
+	if rf.timer == nil { //there is no timer, create it
+		rf.timer = time.NewTimer(time.Millisecond * 5000)
+		go func() {
+			<-initchan
+			for {
+				<-rf.timer.C
+				rf.handleTimer()
+			}
+		}()
+	}
+
 	rf.timer.Reset(timeOut)
+	initchan <- 2
 }
 
 //
