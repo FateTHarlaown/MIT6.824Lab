@@ -226,12 +226,37 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
 
+func (rf *Raft) sendAppendEntry( /* to fill */ ) {
+	//to fill
+}
+
+func (rf *Raft) handleVoteReply(reply_args *RequestVoteReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.state == CANDIDATE && reply_args.voteGranted == true {
+		rf.beVoted++
+		if rf.beVoted > len(rf.peers)/2 {
+			rf.state = LEADER
+			rf.resetTimer()
+			rf.sendAppendEntry() //not complete
+		}
+	} else if reply_args.voteGranted == false && reply_args.term > rf.currentTerm {
+		rf.state = FOLLOER
+		rf.currentTerm = reply_args.term
+		rf.persist()
+		rf.votedFor = -1
+		rf.resetTimer()
+	}
+}
+
 func (rf *Raft) handleTimer() {
 	//todo: deal time out event for follower and leader
 	if rf.state == LEADER {
 		//todo: send heartbeat and append antry
 	} else { // start a leader election
 		rf.mu.Lock()
+		defer rf.mu.Unlock()
 		rf.state = CANDIDATE
 		rf.beVoted = 1
 		rf.grantedFor = rf.me
@@ -261,10 +286,14 @@ func (rf *Raft) handleTimer() {
 
 			go func(sever int, args RequestVoteArgs, reply_args RequestVoteReply) {
 				//todo: send requestvote to others and deal with the reply
-
+				ok := rf.sendRequestVote(sever, &args, &reply_args)
+				if ok != false {
+					rf.handleVoteReply(&reply_args)
+				}
 			}(i, args, reply_args)
 		}
 	}
+	rf.resetTimer()
 }
 
 func (rf *Raft) resetTimer() {
