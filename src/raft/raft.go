@@ -34,7 +34,7 @@ type Log struct {
 
 //the role for raft
 const (
-	FOLLOER   = "follower"
+	FOLLOWER  = "follower"
 	CANDIDATE = "candidate"
 	LEADER    = "leader"
 )
@@ -152,11 +152,60 @@ type RequestVoteReply struct {
 	voteGranted bool
 }
 
+//AppendEntryArgs, for heartbeats and logs
+type AppendEntryArgs struct {
+	term         uint64
+	leaderId     int
+	prevLogIndex uint64
+	prevLogTerm  uint64
+	entries      []Log
+	leaderCommit uint64
+}
+
+//the reply for AppendEnty RPC
+type AppendEntryReply struct {
+	term    uint64
+	success bool
+}
+
 //
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	will_vote := true
+	n := len(rf.peers)
+	if n > 0 { // candidate's logs is older than this raft
+		if rf.logs[n-1].Term > args.lastLogTerm ||
+			(rf.logs[n-1].Term == args.lastLogTerm && rf.logs[n-1].Index > args.lastLogIndex) {
+			will_vote = false
+		}
+	}
+
+	if args.term < rf.currentTerm { //candidate's term is out of date
+		will_vote = false
+	}
+
+	if args.term == rf.currentTerm && rf.grantedFor != -1 { //have voted for itself
+		will_vote = false
+	}
+
+	reply.term = rf.currentTerm
+	reply.voteGranted = will_vote
+
+	if will_vote == true {
+		rf.grantedFor = args.candidateId
+		rf.state = FOLLOWER
+		if args.term > rf.currentTerm {
+			rf.currentTerm = args.term
+			reply.term = rf.currentTerm
+		}
+		rf.persist()
+		rf.resetTimer()
+	}
 }
 
 //
@@ -193,6 +242,21 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+//append entry RPC handler
+func (rf *Raft) AppendEntries(server int, args *AppendEntryArgs, reply *AppendEntryReply) {
+	//todo
+
+}
+
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntryArgs, reply *AppendEntryReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
+}
+
+func (rf *Raft) handleAppendEntriesReply(reply *AppendEntryReply) {
+	//todo
+}
+
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -226,10 +290,6 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
 
-func (rf *Raft) sendAppendEntry( /* to fill */ ) {
-	//to fill
-}
-
 func (rf *Raft) handleVoteReply(reply_args *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -239,10 +299,32 @@ func (rf *Raft) handleVoteReply(reply_args *RequestVoteReply) {
 		if rf.beVoted > len(rf.peers)/2 {
 			rf.state = LEADER
 			rf.resetTimer()
-			rf.sendAppendEntry() //not complete
+			//send heartbeat to others
+			for i := 0; i < len(rf.peers); i++ {
+				if i == rf.me {
+					continue
+				}
+
+				args := AppendEntryArgs{
+					term:         rf.currentTerm,
+					leaderId:     rf.me,
+					prevLogIndex: 0,       //complete in next part
+					prevLogTerm:  0,       //complete in next part
+					entries:      []Log{}, //complete in next part
+					leaderCommit: 0,       //complete in next part
+				}
+
+				go func(server int, args AppendEntryArgs) {
+					reply := AppendEntryReply{}
+					ok := rf.sendAppendEntries(server, &args, &reply)
+					if ok != false {
+						rf.handleAppendEntriesReply(&reply)
+					}
+				}(i, args)
+			}
 		}
 	} else if reply_args.voteGranted == false && reply_args.term > rf.currentTerm {
-		rf.state = FOLLOER
+		rf.state = FOLLOWER
 		rf.currentTerm = reply_args.term
 		rf.persist()
 		rf.votedFor = -1
@@ -277,20 +359,19 @@ func (rf *Raft) handleTimer() {
 			args.lastLogIndex = rf.logs[log_num-1].Term
 		}
 
-		reply_args := RequestVoteReply{}
-
 		for i := 1; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue
 			}
 
-			go func(sever int, args RequestVoteArgs, reply_args RequestVoteReply) {
+			go func(sever int, args RequestVoteArgs) {
 				//todo: send requestvote to others and deal with the reply
+				reply_args := RequestVoteReply{}
 				ok := rf.sendRequestVote(sever, &args, &reply_args)
 				if ok != false {
 					rf.handleVoteReply(&reply_args)
 				}
-			}(i, args, reply_args)
+			}(i, args)
 		}
 	}
 	rf.resetTimer()
@@ -342,7 +423,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastApplied = 0
 	rf.nextIndex = make([]uint64, len(peers))
 	rf.matchIndex = make([]uint64, len(peers))
-	rf.state = FOLLOER
+	rf.state = FOLLOWER
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	rf.persist()
