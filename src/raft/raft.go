@@ -244,8 +244,22 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 //append entry RPC handler
 func (rf *Raft) AppendEntries(server int, args *AppendEntryArgs, reply *AppendEntryReply) {
-	//todo
+	//todo: deal with logs in next part
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	if args.term < rf.currentTerm {
+		reply.success = false
+		reply.term = rf.currentTerm
+	} else {
+		reply.success = true
+		reply.term = rf.currentTerm
+		rf.currentTerm = args.term
+		rf.votedFor = args.leaderId
+		rf.state = FOLLOWER
+		rf.persist() //todo: optimize it, only call persist when needed
+		rf.resetTimer()
+	}
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntryArgs, reply *AppendEntryReply) bool {
@@ -254,7 +268,18 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntryArgs, reply *Appe
 }
 
 func (rf *Raft) handleAppendEntriesReply(reply *AppendEntryReply) {
-	//todo
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	//todo: deal with logs in next part
+	if reply.term > rf.currentTerm {
+		rf.currentTerm = reply.term
+		rf.state = FOLLOWER
+		rf.votedFor = -1
+		rf.persist()
+		rf.resetTimer()
+	} else if reply.success == true {
+		//todo
+	}
 }
 
 //
