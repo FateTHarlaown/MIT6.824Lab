@@ -21,6 +21,7 @@ import "sync"
 import "labrpc"
 import "time"
 import "math/rand"
+import "fmt"
 
 // import "bytes"
 // import "encoding/gob"
@@ -176,8 +177,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	fmt.Println("I am", rf.me, "i get a vote request:", args)
 	will_vote := true
-	n := len(rf.peers)
+	n := len(rf.logs)
 	if n > 0 { // candidate's logs is older than this raft
 		if rf.logs[n-1].Term > args.lastLogTerm ||
 			(rf.logs[n-1].Term == args.lastLogTerm && rf.logs[n-1].Index > args.lastLogIndex) {
@@ -238,6 +240,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	fmt.Println("I am", rf.me, "sending vote request to", server, "args:", args)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -361,6 +364,28 @@ func (rf *Raft) handleTimer() {
 	//todo: deal time out event for follower and leader
 	if rf.state == LEADER {
 		//todo: send heartbeat and append antry
+		for i := 0; i < len(rf.peers); i++ {
+			if i == rf.me {
+				continue
+			}
+
+			args := AppendEntryArgs{
+				term:         rf.currentTerm,
+				leaderId:     rf.me,
+				prevLogIndex: 0,       //complete in next part
+				prevLogTerm:  0,       //complete in next part
+				entries:      []Log{}, //complete in next part
+				leaderCommit: 0,       //complete in next part
+			}
+
+			go func(server int, args AppendEntryArgs) {
+				reply := AppendEntryReply{}
+				ok := rf.sendAppendEntries(server, &args, &reply)
+				if ok != false {
+					rf.handleAppendEntriesReply(&reply)
+				}
+			}(i, args)
+		}
 	} else { // start a leader election
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
@@ -392,6 +417,7 @@ func (rf *Raft) handleTimer() {
 			go func(sever int, args RequestVoteArgs) {
 				//todo: send requestvote to others and deal with the reply
 				reply_args := RequestVoteReply{}
+				fmt.Println("I am", rf.me, rf.state, "I am sending Request vote !", args)
 				ok := rf.sendRequestVote(sever, &args, &reply_args)
 				if ok != false {
 					rf.handleVoteReply(&reply_args)
@@ -436,6 +462,7 @@ func (rf *Raft) resetTimer() {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
+	fmt.Print("start to init a raft node:  ", me, "      ")
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
@@ -452,6 +479,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	rf.persist()
+	rf.resetTimer()
 
 	return rf
 }
