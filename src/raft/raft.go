@@ -137,10 +137,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	term         uint64
-	candidateId  int
-	lastLogIndex uint64
-	lastLogTerm  uint64
+	Term         uint64
+	CandidateId  int
+	LastLogIndex uint64
+	LastLogTerm  uint64
 }
 
 //
@@ -149,24 +149,24 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-	term        uint64
-	voteGranted bool
+	Term        uint64
+	VoteGranted bool
 }
 
 //AppendEntryArgs, for heartbeats and logs
 type AppendEntryArgs struct {
-	term         uint64
-	leaderId     int
-	prevLogIndex uint64
-	prevLogTerm  uint64
-	entries      []Log
-	leaderCommit uint64
+	Term         uint64
+	LeaderId     int
+	PrevLogIndex uint64
+	PrevLogTerm  uint64
+	Entries      []Log
+	LeaderCommit uint64
 }
 
 //the reply for AppendEnty RPC
 type AppendEntryReply struct {
-	term    uint64
-	success bool
+	Term    uint64
+	Success bool
 }
 
 //
@@ -181,29 +181,29 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	will_vote := true
 	n := len(rf.logs)
 	if n > 0 { // candidate's logs is older than this raft
-		if rf.logs[n-1].Term > args.lastLogTerm ||
-			(rf.logs[n-1].Term == args.lastLogTerm && rf.logs[n-1].Index > args.lastLogIndex) {
+		if rf.logs[n-1].Term > args.LastLogTerm ||
+			(rf.logs[n-1].Term == args.LastLogTerm && rf.logs[n-1].Index > args.LastLogIndex) {
 			will_vote = false
 		}
 	}
 
-	if args.term < rf.currentTerm { //candidate's term is out of date
+	if args.Term < rf.currentTerm { //candidate's term is out of date
 		will_vote = false
 	}
 
-	if args.term == rf.currentTerm && rf.grantedFor != -1 { //have voted for itself
+	if args.Term == rf.currentTerm && rf.grantedFor != -1 { //have voted for itself
 		will_vote = false
 	}
 
-	reply.term = rf.currentTerm
-	reply.voteGranted = will_vote
+	reply.Term = rf.currentTerm
+	reply.VoteGranted = will_vote
 
 	if will_vote == true {
-		rf.grantedFor = args.candidateId
+		rf.grantedFor = args.CandidateId
 		rf.state = FOLLOWER
-		if args.term > rf.currentTerm {
-			rf.currentTerm = args.term
-			reply.term = rf.currentTerm
+		if args.Term > rf.currentTerm {
+			rf.currentTerm = args.Term
+			reply.Term = rf.currentTerm
 		}
 		rf.persist()
 		rf.resetTimer()
@@ -251,14 +251,14 @@ func (rf *Raft) AppendEntries(server int, args *AppendEntryArgs, reply *AppendEn
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	if args.term < rf.currentTerm {
-		reply.success = false
-		reply.term = rf.currentTerm
+	if args.Term < rf.currentTerm {
+		reply.Success = false
+		reply.Term = rf.currentTerm
 	} else {
-		reply.success = true
-		reply.term = rf.currentTerm
-		rf.currentTerm = args.term
-		rf.votedFor = args.leaderId
+		reply.Success = true
+		reply.Term = rf.currentTerm
+		rf.currentTerm = args.Term
+		rf.votedFor = args.LeaderId
 		rf.state = FOLLOWER
 		rf.persist() //todo: optimize it, only call persist when needed
 		rf.resetTimer()
@@ -274,13 +274,13 @@ func (rf *Raft) handleAppendEntriesReply(reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	//todo: deal with logs in next part
-	if reply.term > rf.currentTerm {
-		rf.currentTerm = reply.term
+	if reply.Term > rf.currentTerm {
+		rf.currentTerm = reply.Term
 		rf.state = FOLLOWER
 		rf.votedFor = -1
 		rf.persist()
 		rf.resetTimer()
-	} else if reply.success == true {
+	} else if reply.Success == true {
 		//todo
 	}
 }
@@ -322,7 +322,7 @@ func (rf *Raft) handleVoteReply(reply_args *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	if rf.state == CANDIDATE && reply_args.voteGranted == true {
+	if rf.state == CANDIDATE && reply_args.VoteGranted == true {
 		rf.beVoted++
 		if rf.beVoted > len(rf.peers)/2 {
 			rf.state = LEADER
@@ -334,12 +334,12 @@ func (rf *Raft) handleVoteReply(reply_args *RequestVoteReply) {
 				}
 
 				args := AppendEntryArgs{
-					term:         rf.currentTerm,
-					leaderId:     rf.me,
-					prevLogIndex: 0,       //complete in next part
-					prevLogTerm:  0,       //complete in next part
-					entries:      []Log{}, //complete in next part
-					leaderCommit: 0,       //complete in next part
+					Term:         rf.currentTerm,
+					LeaderId:     rf.me,
+					PrevLogIndex: 0,       //complete in next part
+					PrevLogTerm:  0,       //complete in next part
+					Entries:      []Log{}, //complete in next part
+					LeaderCommit: 0,       //complete in next part
 				}
 
 				go func(server int, args AppendEntryArgs) {
@@ -351,9 +351,9 @@ func (rf *Raft) handleVoteReply(reply_args *RequestVoteReply) {
 				}(i, args)
 			}
 		}
-	} else if reply_args.voteGranted == false && reply_args.term > rf.currentTerm {
+	} else if reply_args.VoteGranted == false && reply_args.Term > rf.currentTerm {
 		rf.state = FOLLOWER
-		rf.currentTerm = reply_args.term
+		rf.currentTerm = reply_args.Term
 		rf.persist()
 		rf.votedFor = -1
 		rf.resetTimer()
@@ -370,12 +370,12 @@ func (rf *Raft) handleTimer() {
 			}
 
 			args := AppendEntryArgs{
-				term:         rf.currentTerm,
-				leaderId:     rf.me,
-				prevLogIndex: 0,       //complete in next part
-				prevLogTerm:  0,       //complete in next part
-				entries:      []Log{}, //complete in next part
-				leaderCommit: 0,       //complete in next part
+				Term:         rf.currentTerm,
+				LeaderId:     rf.me,
+				PrevLogIndex: 0,       //complete in next part
+				PrevLogTerm:  0,       //complete in next part
+				Entries:      []Log{}, //complete in next part
+				LeaderCommit: 0,       //complete in next part
 			}
 
 			go func(server int, args AppendEntryArgs) {
@@ -397,16 +397,16 @@ func (rf *Raft) handleTimer() {
 		rf.persist()
 
 		args := RequestVoteArgs{
-			term:         rf.currentTerm,
-			candidateId:  rf.me,
-			lastLogIndex: 0,
-			lastLogTerm:  0,
+			Term:         rf.currentTerm,
+			CandidateId:  rf.me,
+			LastLogIndex: 0,
+			LastLogTerm:  0,
 		}
 
 		log_num := len(rf.logs)
 		if log_num > 0 {
-			args.lastLogIndex = rf.logs[log_num-1].Index
-			args.lastLogIndex = rf.logs[log_num-1].Term
+			args.LastLogIndex = rf.logs[log_num-1].Index
+			args.LastLogIndex = rf.logs[log_num-1].Term
 		}
 
 		for i := 1; i < len(rf.peers); i++ {
