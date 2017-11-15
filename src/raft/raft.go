@@ -246,7 +246,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 //append entry RPC handler
-func (rf *Raft) AppendEntries(server int, args *AppendEntryArgs, reply *AppendEntryReply) {
+func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	//todo: deal with logs in next part
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -361,7 +361,9 @@ func (rf *Raft) handleVoteReply(reply_args *RequestVoteReply) {
 }
 
 func (rf *Raft) handleTimer() {
-	//todo: deal time out event for follower and leader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	if rf.state == LEADER {
 		//todo: send heartbeat and append antry
 		for i := 0; i < len(rf.peers); i++ {
@@ -387,8 +389,7 @@ func (rf *Raft) handleTimer() {
 			}(i, args)
 		}
 	} else { // start a leader election
-		rf.mu.Lock()
-		defer rf.mu.Unlock()
+
 		rf.state = CANDIDATE
 		rf.beVoted = 1
 		rf.grantedFor = rf.me

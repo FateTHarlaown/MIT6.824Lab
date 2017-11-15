@@ -397,7 +397,7 @@ func MakeService(rcvr interface{}) *Service {
 	svc.rcvr = reflect.ValueOf(rcvr)
 	svc.name = reflect.Indirect(svc.rcvr).Type().Name()
 	svc.methods = map[string]reflect.Method{}
-
+	//fmt.Println("make a Service:", svc.typ)
 	for m := 0; m < svc.typ.NumMethod(); m++ {
 		method := svc.typ.Method(m)
 		mtype := method.Type
@@ -418,6 +418,7 @@ func MakeService(rcvr interface{}) *Service {
 			svc.methods[mname] = method
 		}
 	}
+	//fmt.Println("set methos:", svc.methods)
 
 	return svc
 }
