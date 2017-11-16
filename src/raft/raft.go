@@ -70,9 +70,9 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	votedFor    int    //have voted for which candidate in this term(should be persisted)
-	currentTerm uint64 //(should be persisted)
-	logs        []Log  //(should be persisted)
+	votedFor    int   //have voted for which candidate in this term(should be persisted)
+	currentTerm int   //(should be persisted)
+	logs        []Log //(should be persisted)
 	//volatile state for all servers
 	commitIndex uint64
 	lastApplied uint64
@@ -97,6 +97,10 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	term = rf.currentTerm
+	isleader = (rf.state == LEADER)
 	return term, isleader
 }
 
@@ -137,7 +141,7 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	Term         uint64
+	Term         int
 	CandidateId  int
 	LastLogIndex uint64
 	LastLogTerm  uint64
@@ -149,13 +153,13 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-	Term        uint64
+	Term        int
 	VoteGranted bool
 }
 
 //AppendEntryArgs, for heartbeats and logs
 type AppendEntryArgs struct {
-	Term         uint64
+	Term         int
 	LeaderId     int
 	PrevLogIndex uint64
 	PrevLogTerm  uint64
@@ -165,7 +169,7 @@ type AppendEntryArgs struct {
 
 //the reply for AppendEnty RPC
 type AppendEntryReply struct {
-	Term    uint64
+	Term    int
 	Success bool
 }
 
