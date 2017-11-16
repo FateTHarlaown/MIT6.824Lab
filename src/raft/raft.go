@@ -177,7 +177,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	fmt.Println("I am", rf.me, "i get a vote request:", args)
+	//fmt.Println("I am", rf.me, "i get a vote request:", args, "my term is:", rf.currentTerm)
 	will_vote := true
 	n := len(rf.logs)
 	if n > 0 { // candidate's logs is older than this raft
@@ -240,7 +240,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	fmt.Println("I am", rf.me, "sending vote request to", server, "args:", args)
+	//fmt.Println("I am", rf.me, "sending vote request to", server, "args:", args)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -379,7 +379,7 @@ func (rf *Raft) handleTimer() {
 				Entries:      []Log{}, //complete in next part
 				LeaderCommit: 0,       //complete in next part
 			}
-
+			//fmt.Println("I am", rf.me, "a", rf.state, "I am sending app heart beats, aargs:", args)
 			go func(server int, args AppendEntryArgs) {
 				reply := AppendEntryReply{}
 				ok := rf.sendAppendEntries(server, &args, &reply)
@@ -394,7 +394,6 @@ func (rf *Raft) handleTimer() {
 		rf.beVoted = 1
 		rf.grantedFor = rf.me
 		rf.currentTerm++
-		rf.resetTimer()
 		rf.persist()
 
 		args := RequestVoteArgs{
@@ -418,7 +417,7 @@ func (rf *Raft) handleTimer() {
 			go func(sever int, args RequestVoteArgs) {
 				//todo: send requestvote to others and deal with the reply
 				reply_args := RequestVoteReply{}
-				fmt.Println("I am", rf.me, rf.state, "I am sending Request vote !", args)
+				//fmt.Println("I am", rf.me, rf.state, "I am sending Request vote !", args)
 				ok := rf.sendRequestVote(sever, &args, &reply_args)
 				if ok != false {
 					rf.handleVoteReply(&reply_args)
@@ -432,7 +431,7 @@ func (rf *Raft) handleTimer() {
 func (rf *Raft) resetTimer() {
 	timeOut := time.Duration(HeartBeatTime)
 	if rf.state != LEADER {
-		timeOut = time.Duration(ElectionMinTime + rand.Int63n(ElectionMaxTime-ElectionMinTime))
+		timeOut = time.Millisecond * time.Duration(ElectionMinTime+rand.Int63n(ElectionMaxTime-ElectionMinTime))
 	}
 	initchan := make(chan int, 1)
 	if rf.timer == nil { //there is no timer, create it
@@ -446,6 +445,7 @@ func (rf *Raft) resetTimer() {
 		}()
 	}
 
+	fmt.Println("Reset", rf.me, "timer, it's", rf.state, "dtime:", timeOut)
 	rf.timer.Reset(timeOut)
 	initchan <- 2
 }
