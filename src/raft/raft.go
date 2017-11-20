@@ -29,8 +29,8 @@ import "fmt"
 //the struct for log
 type Log struct {
 	Command interface{}
-	Index   uint64
-	Term    uint64
+	Index   int
+	Term    int
 }
 
 //the role for raft
@@ -74,11 +74,11 @@ type Raft struct {
 	currentTerm int   //(should be persisted)
 	logs        []Log //(should be persisted)
 	//volatile state for all servers
-	commitIndex uint64
-	lastApplied uint64
+	commitIndex int
+	lastApplied int
 	//volatile state for leader
-	nextIndex  []uint64
-	matchIndex []uint64
+	nextIndex  []int
+	matchIndex []int
 	beVoted    int
 
 	grantedFor int
@@ -143,8 +143,8 @@ type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
 	Term         int
 	CandidateId  int
-	LastLogIndex uint64
-	LastLogTerm  uint64
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 //
@@ -161,10 +161,10 @@ type RequestVoteReply struct {
 type AppendEntryArgs struct {
 	Term         int
 	LeaderId     int
-	PrevLogIndex uint64
-	PrevLogTerm  uint64
+	PrevLogIndex int
+	PrevLogTerm  int
 	Entries      []Log
-	LeaderCommit uint64
+	LeaderCommit int
 }
 
 //the reply for AppendEnty RPC
@@ -303,11 +303,35 @@ func (rf *Raft) handleAppendEntriesReply(reply *AppendEntryReply) {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	index := -1
 	term := -1
-	isLeader := true
-
+	isLeader := false
 	// Your code here (2B).
+	if rf.state == LEADER {
+		n := len(rf.logs)
+		var newIndex int
+
+		if n > 0 {
+			newIndex = rf.logs[n-1].Index + 1
+		} else {
+			newIndex = 1
+		}
+
+		newLog := Log{
+			Command: command,
+			Index:   newIndex,
+			Term:    rf.currentTerm,
+		}
+
+		rf.logs = append(rf.logs, newLog)
+		rf.persist()
+		index = newIndex
+		term = rf.currentTerm
+		isLeader = true
+	}
 
 	return index, term, isLeader
 }
