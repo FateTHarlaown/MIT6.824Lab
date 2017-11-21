@@ -264,6 +264,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.currentTerm = args.Term
 		rf.votedFor = args.LeaderId
 		rf.state = FOLLOWER
+
 		rf.persist() //todo: optimize it, only call persist when needed
 		rf.resetTimer()
 	}
@@ -402,10 +403,20 @@ func (rf *Raft) handleTimer() {
 			args := AppendEntryArgs{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
-				PrevLogIndex: 0,       //complete in next part
-				PrevLogTerm:  0,       //complete in next part
-				Entries:      []Log{}, //complete in next part
-				LeaderCommit: 0,       //complete in next part
+				PrevLogIndex: 0,
+				PrevLogTerm:  0,
+				Entries:      []Log{},
+				LeaderCommit: rf.commitIndex,
+			}
+
+			n := rf.nextIndex[i]
+			if n > 1 {
+				if pos, ok := findLogByIndex(rf.logs, n); ok == true {
+					if pos > 0 {
+						args.PrevLogTerm = rf.logs[pos-1].Term
+						args.PrevLogIndex = n - 1
+					}
+				}
 			}
 			//fmt.Println("I am", rf.me, "a", rf.state, "I am sending app heart beats, aargs:", args)
 			go func(server int, args AppendEntryArgs) {
@@ -456,6 +467,25 @@ func (rf *Raft) handleTimer() {
 	rf.resetTimer()
 }
 
+func findLogByIndex(logs []Log, index int) (pos int, ok bool) {
+	if len(logs) <= 0 {
+		return -1, false
+	}
+
+	pos = -1
+	ok = false
+	for n := len(logs) - 1; n >= 0; n-- {
+		if logs[n].Index == index {
+			pos = n
+			ok = true
+			break
+		} else if logs[n].Index < index {
+			break
+		}
+	}
+
+	return pos, ok
+}
 func (rf *Raft) resetTimer() {
 	timeOut := time.Duration(HeartBeatTime)
 	if rf.state != LEADER {
@@ -502,8 +532,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.logs = []Log{}
 	rf.commitIndex = 0
 	rf.lastApplied = 0
-	rf.nextIndex = make([]uint64, len(peers))
-	rf.matchIndex = make([]uint64, len(peers))
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
 	rf.state = FOLLOWER
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
