@@ -258,14 +258,21 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	if args.Term < rf.currentTerm {
 		reply.Success = false
 		reply.Term = rf.currentTerm
+		return
 	} else {
-		reply.Success = true
+		if pos, ok := findLogByIndex(rf.logs, args.PrevLogIndex); ok == false {
+			reply.Success = false
+		} else {
+			if args.PrevLogTerm != rf.logs[pos].Term {
+				rf.logs = rf.logs[:pos-1]
+			}
+		}
+
 		reply.Term = rf.currentTerm
 		rf.currentTerm = args.Term
 		rf.votedFor = args.LeaderId
 		rf.state = FOLLOWER
-
-		rf.persist() //todo: optimize it, only call persist when needed
+		rf.persist()
 		rf.resetTimer()
 	}
 }
@@ -394,7 +401,6 @@ func (rf *Raft) handleTimer() {
 	defer rf.mu.Unlock()
 
 	if rf.state == LEADER {
-		//todo: send heartbeat and append antry
 		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue
@@ -415,6 +421,12 @@ func (rf *Raft) handleTimer() {
 					if pos > 0 {
 						args.PrevLogTerm = rf.logs[pos-1].Term
 						args.PrevLogIndex = n - 1
+						args.Entries = rf.logs[pos:]
+					} else if ok == false {
+						if num := len(rf.logs); num > 0 {
+							args.PrevLogIndex = rf.logs[num-1].Index
+							args.PrevLogTerm = rf.logs[num-1].Term
+						}
 					}
 				}
 			}
