@@ -255,25 +255,30 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	if args.Term < rf.currentTerm {
-		reply.Success = false
-		reply.Term = rf.currentTerm
-		return
-	} else {
-		if pos, ok := findLogByIndex(rf.logs, args.PrevLogIndex); ok == false {
-			reply.Success = false
-		} else {
-			if args.PrevLogTerm != rf.logs[pos].Term {
+	appendFlag := false
+	reply.Term = rf.currentTerm
+
+	if args.Term >= rf.currentTerm {
+		if args.PrevLogIndex == 0 {
+			appendFlag = true
+		} else if pos, ok := findLogByIndex(rf.logs, args.PrevLogIndex); ok == true {
+			if args.PrevLogTerm == rf.logs[pos].Term {
+				appendFlag = true
+			} else {
 				rf.logs = rf.logs[:pos-1]
 			}
 		}
 
-		reply.Term = rf.currentTerm
 		rf.currentTerm = args.Term
 		rf.votedFor = args.LeaderId
 		rf.state = FOLLOWER
 		rf.persist()
 		rf.resetTimer()
+	}
+
+	reply.Success = appendFlag
+	if appendFlag == true && len(args.Entries) > 0 {
+		rf.logs = append(rf.logs, args.Entries...)
 	}
 }
 
