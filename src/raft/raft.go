@@ -281,6 +281,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.logs = append(rf.logs, args.Entries...)
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = minInt(args.LeaderCommit, args.Entries[len(args.Entries)-1].Index)
+			//todo: apply logs
 		}
 	}
 }
@@ -298,18 +299,21 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntryArgs, reply *Appe
 	return ok
 }
 
-func (rf *Raft) handleAppendEntriesReply(reply *AppendEntryReply) {
+func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	//todo: deal with logs in next part
+
 	if reply.Term > rf.currentTerm {
 		rf.currentTerm = reply.Term
 		rf.state = FOLLOWER
 		rf.votedFor = -1
 		rf.persist()
 		rf.resetTimer()
-	} else if reply.Success == true {
-		//todo
+		return
+	} 
+
+	if reply.Success == true {
+		rf.nextIndex[]
 	}
 }
 
@@ -493,7 +497,7 @@ func (rf *Raft) appendToFollowers() {
 			reply := AppendEntryReply{}
 			ok := rf.sendAppendEntries(server, &args, &reply)
 			if ok != false {
-				rf.handleAppendEntriesReply(&reply)
+				rf.handleAppendEntriesReply(server, &reply)
 			}
 		}(i, args)
 	}
