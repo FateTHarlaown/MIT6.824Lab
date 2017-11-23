@@ -310,10 +310,25 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 		rf.persist()
 		rf.resetTimer()
 		return
-	} 
+	}
 
 	if reply.Success == true {
-		rf.nextIndex[]
+		rf.nextIndex[server] = rf.logs[len(rf.logs)-1].Index + 1
+		rf.matchIndex[server] = rf.nextIndex[server] - 1
+
+		majorCount := 0
+		for i := 0; i < len(rf.matchIndex); i++ {
+			if rf.matchIndex[i] >= rf.matchIndex[server] {
+				majorCount++
+			}
+		}
+
+		if majorCount > len(rf.matchIndex)/2 {
+			//todo: commit logs
+		}
+	} else {
+		rf.nextIndex[server]--
+
 	}
 }
 
