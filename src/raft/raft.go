@@ -313,7 +313,12 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 	}
 
 	if reply.Success == true {
-		rf.nextIndex[server] = rf.logs[len(rf.logs)-1].Index + 1
+		n := len(rf.logs)
+		if n == 0 {
+			rf.nextIndex[server] = 1
+		} else {
+			rf.nextIndex[server] = rf.logs[len(rf.logs)-1].Index + 1
+		}
 		rf.matchIndex[server] = rf.nextIndex[server] - 1
 
 		majorCount := 0
@@ -324,11 +329,12 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 		}
 
 		if majorCount > len(rf.matchIndex)/2 {
+			rf.commitIndex = rf.matchIndex[server]
 			//todo: commit logs
 		}
 	} else {
 		rf.nextIndex[server]--
-
+		rf.appendToFollower(server)
 	}
 }
 
@@ -483,39 +489,44 @@ func (rf *Raft) appendToFollowers() {
 			continue
 		}
 
-		args := AppendEntryArgs{
-			Term:         rf.currentTerm,
-			LeaderId:     rf.me,
-			PrevLogIndex: 0,
-			PrevLogTerm:  0,
-			Entries:      []Log{},
-			LeaderCommit: rf.commitIndex,
-		}
+		rf.appendToFollower(i)
+	}
+}
 
-		n := rf.nextIndex[i]
-		if n > 1 {
-			if pos, ok := findLogByIndex(rf.logs, n); ok == true {
-				if pos > 0 {
-					args.PrevLogTerm = rf.logs[pos-1].Term
-					args.PrevLogIndex = n - 1
-					args.Entries = rf.logs[pos:]
-				} else if ok == false {
-					if num := len(rf.logs); num > 0 {
-						args.PrevLogIndex = rf.logs[num-1].Index
-						args.PrevLogTerm = rf.logs[num-1].Term
-					}
+func (rf *Raft) appendToFollower(sever int) {
+	args := AppendEntryArgs{
+		Term:         rf.currentTerm,
+		LeaderId:     rf.me,
+		PrevLogIndex: 0,
+		PrevLogTerm:  0,
+		Entries:      []Log{},
+		LeaderCommit: rf.commitIndex,
+	}
+
+	i := sever
+	n := rf.nextIndex[i]
+	if n > 1 {
+		if pos, ok := findLogByIndex(rf.logs, n); ok == true {
+			if pos > 0 {
+				args.PrevLogTerm = rf.logs[pos-1].Term
+				args.PrevLogIndex = n - 1
+				args.Entries = rf.logs[pos:]
+			} else if ok == false {
+				if num := len(rf.logs); num > 0 {
+					args.PrevLogIndex = rf.logs[num-1].Index
+					args.PrevLogTerm = rf.logs[num-1].Term
 				}
 			}
 		}
-		//fmt.Println("I am", rf.me, "a", rf.state, "I am sending app heart beats, aargs:", args)
-		go func(server int, args AppendEntryArgs) {
-			reply := AppendEntryReply{}
-			ok := rf.sendAppendEntries(server, &args, &reply)
-			if ok != false {
-				rf.handleAppendEntriesReply(server, &reply)
-			}
-		}(i, args)
 	}
+	//fmt.Println("I am", rf.me, "a", rf.state, "I am sending app heart beats, aargs:", args)
+	go func(server int, args AppendEntryArgs) {
+		reply := AppendEntryReply{}
+		ok := rf.sendAppendEntries(server, &args, &reply)
+		if ok != false {
+			rf.handleAppendEntriesReply(server, &reply)
+		}
+	}(i, args)
 }
 
 func (rf *Raft) resetTimer() {
