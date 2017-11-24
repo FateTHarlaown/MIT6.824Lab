@@ -282,6 +282,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = minInt(args.LeaderCommit, args.Entries[len(args.Entries)-1].Index)
 			//todo: apply logs
+			go rf.commitLogs()
 		}
 	}
 }
@@ -331,6 +332,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 		if majorCount > len(rf.matchIndex)/2 {
 			rf.commitIndex = rf.matchIndex[server]
 			//todo: commit logs
+			go rf.commitLogs()
 		}
 	} else {
 		rf.nextIndex[server]--
@@ -383,6 +385,36 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	return index, term, isLeader
+}
+
+//commit index to state machine, must be run as a new goroutline
+func (rf *Raft) commitLogs() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	n := len(rf.logs)
+	if n == 0 {
+		return
+	}
+
+	if rf.lastApplied < rf.commitIndex {
+		startPos := 0
+		aPos, ok := findLogByIndex(rf.logs, rf.lastApplied)
+		if ok != false {
+			startPos = aPos
+		}
+
+		cPos, _ := findLogByIndex(rf.logs, rf.commitIndex)
+		for ; startPos <= cPos; startPos++ {
+			msg := ApplyMsg{
+				Index:       rf.logs[startPos].Index,
+				Command:     rf.logs[startPos].Command,
+				UseSnapshot: false,
+				Snapshot:    []byte{},
+			}
+			rf.applyCh <- msg
+		}
+	}
 }
 
 //
