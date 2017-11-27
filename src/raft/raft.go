@@ -42,9 +42,9 @@ const (
 
 //the heartbeat time and timemout time
 const (
-	HeartBeatTime   = time.Millisecond * 100
-	ElectionMinTime = 300
-	ElectionMaxTime = 600
+	HeartBeatTime   = time.Millisecond * 50
+	ElectionMinTime = 150
+	ElectionMaxTime = 300
 )
 
 //
@@ -313,6 +313,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 		return
 	}
 
+	fmt.Println("I am", rf.me, "and get a reply:", reply)
 	if reply.Success == true {
 		n := len(rf.logs)
 		if n == 0 {
@@ -335,6 +336,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 			go rf.commitLogs()
 		}
 	} else {
+		fmt.Println("shit! reply for append false!, dec and try another time!")
 		rf.nextIndex[server]--
 		rf.appendToFollower(server)
 	}
@@ -382,6 +384,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = newIndex
 		term = rf.currentTerm
 		isLeader = true
+		fmt.Println("Leader:", rf.me, "have append log:", index)
 	}
 
 	return index, term, isLeader
@@ -452,7 +455,9 @@ func (rf *Raft) handleTimer() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	fmt.Println("raft:", rf.me, "timeout! state:", rf.state, "logs:", rf.logs)
 	if rf.state == LEADER {
+		fmt.Println("leader heartbeat, show raft:", rf.me, "log state:", rf.logs)
 		rf.appendToFollowers()
 	} else { // start a leader election
 
@@ -537,21 +542,24 @@ func (rf *Raft) appendToFollower(sever int) {
 
 	i := sever
 	n := rf.nextIndex[i]
-	if n > 1 {
+	if n >= 1 {
+		fmt.Println("have index to send!!it's:", n)
 		if pos, ok := findLogByIndex(rf.logs, n); ok == true {
+			fmt.Println("find index result:", ok)
 			if pos > 0 {
 				args.PrevLogTerm = rf.logs[pos-1].Term
 				args.PrevLogIndex = n - 1
-				args.Entries = rf.logs[pos:]
-			} else if ok == false {
-				if num := len(rf.logs); num > 0 {
-					args.PrevLogIndex = rf.logs[num-1].Index
-					args.PrevLogTerm = rf.logs[num-1].Term
-				}
+			}
+			args.Entries = rf.logs[pos:]
+			fmt.Println("we add logs to appentry, the entry become:", args)
+		} else {
+			if num := len(rf.logs); num > 0 {
+				args.PrevLogIndex = rf.logs[num-1].Index
+				args.PrevLogTerm = rf.logs[num-1].Term
 			}
 		}
 	}
-	//fmt.Println("I am", rf.me, "a", rf.state, "I am sending app heart beats, aargs:", args)
+	fmt.Println("I am", rf.me, "a", rf.state, "I am sending append enties, aargs:", args)
 	go func(server int, args AppendEntryArgs) {
 		reply := AppendEntryReply{}
 		ok := rf.sendAppendEntries(server, &args, &reply)
@@ -577,10 +585,9 @@ func (rf *Raft) resetTimer() {
 			}
 		}()
 	}
-
-	fmt.Println("Reset", rf.me, "timer, it's", rf.state, "dtime:", timeOut)
 	rf.timer.Reset(timeOut)
 	initchan <- 2
+	fmt.Println("Reset", rf.me, "timer, it's", rf.state, "dtime:", timeOut, "logs:", rf.logs)
 }
 
 //
