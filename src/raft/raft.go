@@ -42,9 +42,9 @@ const (
 
 //the heartbeat time and timemout time
 const (
-	HeartBeatTime   = time.Millisecond * 50
-	ElectionMinTime = 150
-	ElectionMaxTime = 300
+	HeartBeatTime   = time.Millisecond * 100
+	ElectionMinTime = 300
+	ElectionMaxTime = 600
 )
 
 //
@@ -277,11 +277,15 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	}
 
 	reply.Success = appendFlag
-	if appendFlag == true && len(args.Entries) > 0 {
-		rf.logs = append(rf.logs, args.Entries...)
-		if args.LeaderCommit > rf.commitIndex {
+	if appendFlag == true {
+		if len(args.Entries) > 0 {
+			rf.logs = append(rf.logs, args.Entries...)
 			rf.commitIndex = minInt(args.LeaderCommit, args.Entries[len(args.Entries)-1].Index)
-			//todo: apply logs
+		} else {
+			rf.commitIndex = args.LeaderCommit
+		}
+
+		if rf.lastApplied < rf.commitIndex {
 			go rf.commitLogs()
 		}
 	}
@@ -289,9 +293,9 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 
 func minInt(x int, y int) int {
 	if x > y {
-		return x
-	} else {
 		return y
+	} else {
+		return x
 	}
 }
 
@@ -325,15 +329,21 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 
 		majorCount := 0
 		for i := 0; i < len(rf.matchIndex); i++ {
-			if rf.matchIndex[i] >= rf.matchIndex[server] {
+			if rf.matchIndex[i] >= rf.matchIndex[server] && rf.matchIndex[i] != 0 {
+				if i == rf.me {
+					continue
+				}
 				majorCount++
 			}
 		}
 
-		if majorCount > len(rf.matchIndex)/2 {
+		if majorCount >= len(rf.matchIndex)/2 {
 			rf.commitIndex = rf.matchIndex[server]
 			//todo: commit logs
-			go rf.commitLogs()
+			if rf.lastApplied < rf.commitIndex {
+				go rf.commitLogs()
+			}
+
 		}
 	} else {
 		fmt.Println("shit! reply for append false!, dec and try another time!")
@@ -395,6 +405,7 @@ func (rf *Raft) commitLogs() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	fmt.Println("I'm:", rf.me, "role:", rf.state, "start to commitlog, logs:", rf.logs)
 	n := len(rf.logs)
 	if n == 0 {
 		return
@@ -404,10 +415,11 @@ func (rf *Raft) commitLogs() {
 		startPos := 0
 		aPos, ok := findLogByIndex(rf.logs, rf.lastApplied)
 		if ok != false {
-			startPos = aPos
+			startPos = aPos + 1
 		}
 
 		cPos, _ := findLogByIndex(rf.logs, rf.commitIndex)
+		fmt.Println("oh!we can start to commit, pos range:", startPos, cPos)
 		for ; startPos <= cPos; startPos++ {
 			msg := ApplyMsg{
 				Index:       rf.logs[startPos].Index,
@@ -415,7 +427,10 @@ func (rf *Raft) commitLogs() {
 				UseSnapshot: false,
 				Snapshot:    []byte{},
 			}
+			fmt.Println("to apply index:", msg.Index)
 			rf.applyCh <- msg
+			fmt.Println("have applied index:", msg.Index)
+			rf.lastApplied = msg.Index
 		}
 	}
 }
@@ -607,6 +622,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
+	rf.applyCh = applyCh
 	// Your initialization code here (2A, 2B, 2C).
 	rf.me = me
 	rf.currentTerm = 0
@@ -614,6 +630,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.logs = []Log{}
 	rf.commitIndex = 0
 	rf.lastApplied = 0
+
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.state = FOLLOWER
