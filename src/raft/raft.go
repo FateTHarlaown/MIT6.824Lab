@@ -181,35 +181,41 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	//fmt.Println("I am", rf.me, "i get a vote request:", args, "my term is:", rf.currentTerm)
-	will_vote := true
+	fmt.Println("I am", rf.me, "i get a vote request:", args, "my term is:", rf.currentTerm)
+	willVote := true
+	willReset := false
+
 	n := len(rf.logs)
 	if n > 0 { // candidate's logs is older than this raft
 		if rf.logs[n-1].Term > args.LastLogTerm ||
 			(rf.logs[n-1].Term == args.LastLogTerm && rf.logs[n-1].Index > args.LastLogIndex) {
-			will_vote = false
+			willVote = false
 		}
 	}
 
 	if args.Term < rf.currentTerm { //candidate's term is out of date
-		will_vote = false
-	}
-
-	if args.Term == rf.currentTerm && rf.grantedFor != -1 { //have voted for itself
-		will_vote = false
+		willVote = false
+	} else if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.state = FOLLOWER
+		rf.grantedFor = -1
+		willReset = true
+		rf.persist()
+	} else if args.Term == rf.currentTerm && rf.grantedFor != -1 { //if it has voted for itself
+		willVote = false
 	}
 
 	reply.Term = rf.currentTerm
-	reply.VoteGranted = will_vote
+	reply.VoteGranted = willVote
 
-	if will_vote == true {
+	if willVote == true {
 		rf.grantedFor = args.CandidateId
 		rf.state = FOLLOWER
-		if args.Term > rf.currentTerm {
-			rf.currentTerm = args.Term
-			reply.Term = rf.currentTerm
-		}
 		rf.persist()
+		willReset = true
+	}
+
+	if willReset == true {
 		rf.resetTimer()
 	}
 }
@@ -244,7 +250,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	//fmt.Println("I am", rf.me, "sending vote request to", server, "args:", args)
+	fmt.Println("I am", rf.me, "sending vote request to", server, "args:", args)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -470,7 +476,7 @@ func (rf *Raft) handleTimer() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	fmt.Println("raft:", rf.me, "timeout! state:", rf.state, "logs:", rf.logs)
+	fmt.Println("raft:", rf.me, "timeout! state:", rf.state, "logs:", rf.logs, "term:", rf.currentTerm)
 	if rf.state == LEADER {
 		fmt.Println("leader heartbeat, show raft:", rf.me, "log state:", rf.logs)
 		rf.appendToFollowers()
@@ -501,9 +507,8 @@ func (rf *Raft) handleTimer() {
 			}
 
 			go func(sever int, args RequestVoteArgs) {
-				//todo: send requestvote to others and deal with the reply
 				reply_args := RequestVoteReply{}
-				//fmt.Println("I am", rf.me, rf.state, "I am sending Request vote !", args)
+				fmt.Println("I am", rf.me, rf.state, "I am sending Request vote !", args)
 				ok := rf.sendRequestVote(sever, &args, &reply_args)
 				if ok != false {
 					rf.handleVoteReply(&reply_args)
