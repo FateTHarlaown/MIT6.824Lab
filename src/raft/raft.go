@@ -212,9 +212,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.grantedFor = args.CandidateId
 		rf.state = FOLLOWER
 		rf.persist()
-		willReset = true
+		//willReset = true
 	}
-
+	fmt.Println("I am", rf.me, "i get a vote request:", args, "my ans is:", reply)
 	if willReset == true {
 		rf.resetTimer()
 	}
@@ -461,7 +461,18 @@ func (rf *Raft) handleVoteReply(reply_args *RequestVoteReply) {
 			rf.state = LEADER
 			rf.resetTimer()
 			//send heartbeat to others
-			rf.appendToFollowers()
+			//rf.appendToFollowers()
+			for i := 0; i < len(rf.peers); i++ {
+				if i == rf.me {
+					continue
+				}
+				rf.matchIndex[i] = 0
+				if len(rf.logs) > 0 {
+					rf.nextIndex[i] = rf.logs[len(rf.logs)-1].Index + 1
+				} else {
+					rf.nextIndex[i] = 1
+				}
+			}
 		}
 	} else if reply_args.VoteGranted == false && reply_args.Term > rf.currentTerm {
 		rf.state = FOLLOWER
@@ -498,7 +509,7 @@ func (rf *Raft) handleTimer() {
 		log_num := len(rf.logs)
 		if log_num > 0 {
 			args.LastLogIndex = rf.logs[log_num-1].Index
-			args.LastLogIndex = rf.logs[log_num-1].Term
+			args.LastLogTerm = rf.logs[log_num-1].Term
 		}
 
 		for i := 1; i < len(rf.peers); i++ {
