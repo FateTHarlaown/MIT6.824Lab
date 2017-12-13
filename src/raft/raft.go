@@ -42,9 +42,9 @@ const (
 
 //the heartbeat time and timemout time
 const (
-	HeartBeatTime   = time.Millisecond * 100
-	ElectionMinTime = 300
-	ElectionMaxTime = 600
+	HeartBeatTime   = time.Millisecond * 50
+	ElectionMinTime = 150
+	ElectionMaxTime = 300
 )
 
 //
@@ -257,7 +257,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 //append entry RPC handler
 func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
-	//todo: deal with logs in next part
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -269,9 +268,10 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 			appendFlag = true
 		} else if pos, ok := findLogByIndex(rf.logs, args.PrevLogIndex); ok == true {
 			if args.PrevLogTerm == rf.logs[pos].Term {
+				rf.logs = rf.logs[:pos+1]
 				appendFlag = true
 			} else {
-				rf.logs = rf.logs[:pos-1]
+				rf.logs = rf.logs[:pos]
 			}
 		}
 
@@ -282,6 +282,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.resetTimer()
 	}
 
+	fmt.Println("raft", rf.me, "get appendEntry: ", args, "appenFlag:", appendFlag)
 	reply.Success = appendFlag
 	if appendFlag == true {
 		if len(args.Entries) > 0 {
@@ -292,6 +293,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		}
 
 		if rf.lastApplied < rf.commitIndex {
+			fmt.Println("raft", rf.me, "start to commit log, my last apply:", rf.lastApplied, "my commitIndex:", rf.commitIndex)
 			go rf.commitLogs()
 		}
 	}
@@ -313,6 +315,10 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntryArgs, reply *Appe
 func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	if rf.state != LEADER {
+		return
+	}
 
 	if reply.Term > rf.currentTerm {
 		rf.currentTerm = reply.Term
@@ -354,7 +360,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 	} else {
 		fmt.Println("shit! reply for append false!, dec and try another time!")
 		rf.nextIndex[server]--
-		rf.appendToFollower(server)
+		rf.appendToFollowers()
 	}
 }
 
@@ -590,7 +596,7 @@ func (rf *Raft) appendToFollower(sever int) {
 			}
 		}
 	}
-	fmt.Println("I am", rf.me, "a", rf.state, "I am sending append enties, aargs:", args)
+	fmt.Println("I am", rf.me, "a", rf.state, "I am sending append enties, to:", sever, "aargs:", args)
 	go func(server int, args AppendEntryArgs) {
 		reply := AppendEntryReply{}
 		ok := rf.sendAppendEntries(server, &args, &reply)

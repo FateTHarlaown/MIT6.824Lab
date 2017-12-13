@@ -337,11 +337,12 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
-
+	fmt.Println("step1 finish: disconnected 3 raft!!")
 	// submit lots of commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader1].Start(rand.Int())
 	}
+	fmt.Println("step2 finish: submit lots 50 commands that won't commit!!")
 
 	time.Sleep(RaftElectionTimeout / 2)
 
@@ -352,12 +353,12 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
-
+	fmt.Println("step3 finish: disconnect leader1 and connected others!!")
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3)
 	}
-
+	fmt.Println("step4 finish: submit lots 50 commands that will commit!!")
 	// now another partitioned leader and one follower
 	leader2 := cfg.checkOneLeader()
 	other := (leader1 + 2) % servers
@@ -365,12 +366,12 @@ func TestBackup2B(t *testing.T) {
 		other = (leader2 + 1) % servers
 	}
 	cfg.disconnect(other)
-
+	fmt.Println("step5 finish: close one from group2!")
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader2].Start(rand.Int())
 	}
-
+	fmt.Println("step6 finish: put 50 logs that can not commit!")
 	time.Sleep(RaftElectionTimeout / 2)
 
 	// bring original leader back to life,
@@ -380,12 +381,12 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
-
+	fmt.Println("step7 finish: re connect all!")
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3)
 	}
-
+	fmt.Println("step8 finish: put 50 logs that will commit!")
 	// now everyone
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
