@@ -352,16 +352,15 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 
 		if majorCount >= len(rf.matchIndex)/2 {
 			rf.commitIndex = rf.matchIndex[server]
-			//todo: commit logs
 			if rf.lastApplied < rf.commitIndex {
 				go rf.commitLogs()
 			}
-
 		}
 	} else {
-		fmt.Println("shit! reply for append false!, dec and try another time!")
+		fmt.Println("shit! reply for", server," append false!, dec and try another time!")
 		rf.nextIndex[server]--
-		rf.appendToFollowers()
+		//rf.appendToFollowers()
+		rf.appendToFollower(server)
 	}
 }
 
@@ -559,11 +558,11 @@ func findLogByIndex(logs []Log, index int) (pos int, ok bool) {
 
 //向其他raft节点发送Append Entries
 func (rf *Raft) appendToFollowers() {
+	
 	for i := 0; i < len(rf.peers); i++ {
 		if i == rf.me {
 			continue
 		}
-
 		rf.appendToFollower(i)
 	}
 }

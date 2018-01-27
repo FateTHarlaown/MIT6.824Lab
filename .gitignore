@@ -2,3 +2,4 @@ pkg/
 api.key
 *-handin.tar.gz
 src/raft/test_result
+src/raft/test_result.ans
