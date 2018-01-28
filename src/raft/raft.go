@@ -80,12 +80,8 @@ type Raft struct {
 	matchIndex []int
 	beVoted    int
 
-	grantedFor int
-
 	state string
-
 	applyCh chan ApplyMsg
-
 	timer *time.Timer
 }
 
@@ -199,10 +195,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else if args.Term > rf.CurrentTerm {
 		rf.CurrentTerm = args.Term
 		rf.state = FOLLOWER
-		rf.grantedFor = -1
+		rf.VotedFor = -1
 		willReset = true
 		rf.persist()
-	} else if args.Term == rf.CurrentTerm && rf.grantedFor != -1 { //if it has voted for itself
+	} else if args.Term == rf.CurrentTerm && rf.VotedFor != -1 { //if it has voted for itself
 		willVote = false
 	}
 
@@ -210,7 +206,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VoteGranted = willVote
 
 	if willVote == true {
-		rf.grantedFor = args.CandidateId
+		rf.VotedFor = args.CandidateId
 		rf.state = FOLLOWER
 		rf.persist()
 		//willReset = true
@@ -501,7 +497,7 @@ func (rf *Raft) handleTimer() {
 
 		rf.state = CANDIDATE
 		rf.beVoted = 1
-		rf.grantedFor = rf.me
+		rf.VotedFor = rf.me
 		rf.CurrentTerm++
 		rf.persist()
 
@@ -518,7 +514,7 @@ func (rf *Raft) handleTimer() {
 			args.LastLogTerm = rf.Logs[log_num-1].Term
 		}
 
-		for i := 1; i < len(rf.peers); i++ {
+		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue
 			}
@@ -624,7 +620,7 @@ func (rf *Raft) resetTimer() {
 	}
 	rf.timer.Reset(timeOut)
 	initchan <- 2
-	fmt.Println("Reset", rf.me, "timer, it's", rf.state, "dtime:", timeOut, "logs:", rf.Logs)
+	fmt.Println("Reset", rf.me, "timer, it's", rf.state, "dtime:", timeOut, "logs:", rf.Logs, "term:", rf.CurrentTerm)
 }
 
 //

@@ -561,40 +561,41 @@ func TestPersist22C(t *testing.T) {
 
 	index := 1
 	for iters := 0; iters < 5; iters++ {
-		fmt.Println("Put a val", 10+index)
+		fmt.Println("Turn:", iters)
+		fmt.Println("Put 1 val", 10+index)
 		cfg.one(10+index, servers)
 		index++
 
-		leader1 := cfg.checkOneLeader()
 		fmt.Println("Make sure the set had a leader")
+		leader1 := cfg.checkOneLeader()
 		cfg.disconnect((leader1 + 1) % servers)
 		cfg.disconnect((leader1 + 2) % servers)
-		fmt.Println("close ", leader1+1, leader1+2, "Put next val", 10+index)
+		fmt.Println("close ", (leader1+1)%servers, (leader1+2)%servers, "Put 2 val", 10+index)
 		cfg.one(10+index, servers-2)
 		index++
 
+		fmt.Println("close:",  (leader1+0)%servers, (leader1+3)%servers, (leader1+4)%servers)
 		cfg.disconnect((leader1 + 0) % servers)
 		cfg.disconnect((leader1 + 3) % servers)
 		cfg.disconnect((leader1 + 4) % servers)
-		fmt.Println("have closed:",  leader1+0, leader1+3, leader1+4)
 
+		fmt.Println("restart node:", (leader1+1)%servers, (leader1+2)%servers)
 		cfg.start1((leader1 + 1) % servers)
 		cfg.start1((leader1 + 2) % servers)
 		cfg.connect((leader1 + 1) % servers)
 		cfg.connect((leader1 + 2) % servers)
-		fmt.Println("have restarted node:", leader1+1, leader1+2)
 		time.Sleep(RaftElectionTimeout)
 
+		fmt.Println("restart node:", (leader1+3)%servers)
 		cfg.start1((leader1 + 3) % servers)
 		cfg.connect((leader1 + 3) % servers)
-		fmt.Println("have restarted node:", leader1+3)
-		cfg.one(10+index, servers-2)
 		fmt.Println("Put 3 val:", 10+index)
+		cfg.one(10+index, servers-2)
 		index++
 
+		fmt.Println("restart node: ", leader1+4, leader1+0)
 		cfg.connect((leader1 + 4) % servers)
 		cfg.connect((leader1 + 0) % servers)
-		fmt.Println("have restarted node: ", leader1+4, leader1+0)
 	}
 
 	cfg.one(1000, servers)
