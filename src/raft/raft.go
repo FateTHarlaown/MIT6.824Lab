@@ -293,7 +293,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 			fmt.Println("raft", rf.me, "start to commit log, my last apply:", rf.lastApplied, "my commitIndex:", rf.commitIndex)
 			go rf.commitLogs()
 		}
-	}
+	} 
 }
 
 func minInt(x int, y int) int {
@@ -346,9 +346,10 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 			}
 		}
 
-		if majorCount >= len(rf.matchIndex)/2 {
+		if majorCount >= len(rf.matchIndex)/2 && rf.commitIndex < rf.matchIndex[server] {
 			rf.commitIndex = rf.matchIndex[server]
-			if rf.lastApplied < rf.commitIndex {
+			cpos, _ := findLogByIndex(rf.Logs, rf.commitIndex)
+			if rf.lastApplied < rf.commitIndex && rf.Logs[cpos].Term == rf.CurrentTerm {
 				go rf.commitLogs()
 			}
 		}
@@ -648,8 +649,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.Logs = []Log{}
 	rf.commitIndex = 0
 	rf.lastApplied = 0
-
+	
 	rf.nextIndex = make([]int, len(peers))
+	for i := range rf.nextIndex {
+		rf.nextIndex[i] = 1
+	}
 	rf.matchIndex = make([]int, len(peers))
 	rf.state = FOLLOWER
 	// initialize from state persisted before a crash

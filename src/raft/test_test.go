@@ -650,35 +650,44 @@ func TestFigure82C(t *testing.T) {
 
 	fmt.Printf("Test (2C): Figure 8 ...\n")
 
+	fmt.Println("Start first one!")
 	cfg.one(rand.Int(), 1)
-
+	fmt.Println("Agree first one!: ")
 	nup := servers
+	fmt.Println("BEGIN 1000 test!")
 	for iters := 0; iters < 1000; iters++ {
 		leader := -1
+		fmt.Println("turn: ", iters)
 		for i := 0; i < servers; i++ {
 			if cfg.rafts[i] != nil {
+				fmt.Println("check raft", i, " role")
 				_, _, ok := cfg.rafts[i].Start(rand.Int())
 				if ok {
+					fmt.Println("raft",i, "is leader")
 					leader = i
 				}
 			}
 		}
 
 		if (rand.Int() % 1000) < 100 {
+			fmt.Println("short sleep and leader ", leader, "will crash")
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		} else {
+			fmt.Println("long sleep and leader", leader, "will crash!")
 			ms := (rand.Int63() % 13)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
 
 		if leader != -1 {
+			fmt.Println("leadr", leader, "crash")
 			cfg.crash1(leader)
 			nup -= 1
 		}
 
 		if nup < 3 {
 			s := rand.Int() % servers
+			fmt.Println("start a raft:", s)
 			if cfg.rafts[s] == nil {
 				cfg.start1(s)
 				cfg.connect(s)
@@ -687,6 +696,7 @@ func TestFigure82C(t *testing.T) {
 		}
 	}
 
+	fmt.Println("start all raft!")
 	for i := 0; i < servers; i++ {
 		if cfg.rafts[i] == nil {
 			cfg.start1(i)
@@ -694,6 +704,7 @@ func TestFigure82C(t *testing.T) {
 		}
 	}
 
+	fmt.Println("AGREE last one")
 	cfg.one(rand.Int(), servers)
 
 	fmt.Printf("  ... Passed\n")
