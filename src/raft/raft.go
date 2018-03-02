@@ -168,6 +168,7 @@ type AppendEntryArgs struct {
 type AppendEntryReply struct {
 	Term    int
 	Success bool
+	ConfirmIndex int
 }
 
 //
@@ -263,12 +264,22 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	if args.Term >= rf.CurrentTerm {
 		if args.PrevLogIndex == 0 {
 			appendFlag = true
-		} else if pos, ok := findLogByIndex(rf.Logs, args.PrevLogIndex); ok == true {
-			if args.PrevLogTerm == rf.Logs[pos].Term {
-				rf.Logs = rf.Logs[:pos+1]
-				appendFlag = true
+		} else {
+			pos, ok := findLogByIndex(rf.Logs, args.PrevLogIndex);
+			if ok == true {
+				if args.PrevLogTerm == rf.Logs[pos].Term {
+					rf.Logs = rf.Logs[:pos+1]
+					appendFlag = true
+				} else {
+					reply.ConfirmIndex = rf.Logs[pos].Index
+					rf.Logs = rf.Logs[:pos]
+				}
 			} else {
-				rf.Logs = rf.Logs[:pos]
+				if len(rf.Logs) > 0 {
+					reply.ConfirmIndex = rf.Logs[len(rf.Logs)-1].Index+1
+				} else {
+					reply.ConfirmIndex = 1
+				}
 			}
 		}
 
@@ -287,6 +298,12 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 			rf.commitIndex = minInt(args.LeaderCommit, args.Entries[len(args.Entries)-1].Index)
 		} else {
 			rf.commitIndex = args.LeaderCommit
+		}
+		
+		if len(rf.Logs) > 0 {
+			reply.ConfirmIndex = rf.Logs[len(rf.Logs)-1].Index+1
+		} else {
+			reply.ConfirmIndex = 1
 		}
 
 		if rf.lastApplied < rf.commitIndex {
@@ -332,7 +349,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 		if n == 0 {
 			rf.nextIndex[server] = 1
 		} else {
-			rf.nextIndex[server] = rf.Logs[len(rf.Logs)-1].Index + 1
+			rf.nextIndex[server] = reply.ConfirmIndex
 		}
 		rf.matchIndex[server] = rf.nextIndex[server] - 1
 
@@ -346,16 +363,16 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 			}
 		}
 
-		if majorCount >= len(rf.matchIndex)/2 && rf.commitIndex < rf.matchIndex[server] {
-			rf.commitIndex = rf.matchIndex[server]
-			cpos, _ := findLogByIndex(rf.Logs, rf.commitIndex)
-			if rf.lastApplied < rf.commitIndex && rf.Logs[cpos].Term == rf.CurrentTerm {
-				go rf.commitLogs()
+		if majorCount >= len(rf.peers)/2 && rf.commitIndex < rf.matchIndex[server] {
+			cpos, _ := findLogByIndex(rf.Logs, rf.matchIndex[server])
+			if rf.CurrentTerm == rf.Logs[cpos].Term {
+				rf.commitIndex = rf.matchIndex[server]
+					go rf.commitLogs()
 			}
 		}
 	} else {
 		fmt.Println("shit! reply for", server," append false!, dec and try another time!")
-		rf.nextIndex[server]--
+		rf.nextIndex[server] = reply.ConfirmIndex
 		//rf.appendToFollowers()
 		rf.appendToFollower(server)
 	}
