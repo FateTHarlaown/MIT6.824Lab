@@ -789,6 +789,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
+	fmt.Println("LAST AGREE")
 	cfg.one(rand.Int()%10000, servers)
 
 	fmt.Printf("  ... Passed\n")

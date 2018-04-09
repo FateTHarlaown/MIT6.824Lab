@@ -255,6 +255,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 //append entry RPC handler
 func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
+	/*
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -265,7 +266,8 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		if args.PrevLogIndex == 0 {
 			appendFlag = true
 		} else {
-			pos, ok := findLogByIndex(rf.Logs, args.PrevLogIndex);
+			
+			pos, ok := findLogByIndex(rf.Logs, args.PrevLogIndex)
 			if ok == true {
 				if args.PrevLogTerm == rf.Logs[pos].Term {
 					rf.Logs = rf.Logs[:pos+1]
@@ -281,6 +283,8 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 					reply.ConfirmIndex = 1
 				}
 			}
+			
+
 		}
 
 		rf.CurrentTerm = args.Term
@@ -311,6 +315,55 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 			go rf.commitLogs()
 		}
 	} 
+	*/
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if args.Term < rf.CurrentTerm {
+		reply.Success = false
+		reply.Term = rf.CurrentTerm
+		} else {
+			rf.state = FOLLOWER
+			rf.CurrentTerm = args.Term
+			rf.VotedFor = -1
+			reply.Term = args.Term
+			// Since at first, leader communicates with followers,
+			// nextIndex[server] value equal to len(leader.logs)
+			// so system need to find the matching term and index
+			if args.PrevLogIndex > 0 &&
+				(len(rf.Logs) < args.PrevLogIndex || rf.Logs[args.PrevLogIndex-1].Term != args.PrevLogTerm) {
+				// rf.logger.Printf("Match failed %v\n", args)
+				reply.ConfirmIndex = len(rf.Logs)
+				if reply.ConfirmIndex > args.PrevLogIndex {
+					reply.ConfirmIndex = args.PrevLogIndex
+				}
+				for reply.ConfirmIndex > 0 {
+					if rf.Logs[reply.ConfirmIndex-1].Term == args.PrevLogTerm {
+						break
+					}
+					reply.ConfirmIndex--
+				}
+				reply.Success = false
+			} else if args.Entries != nil {
+				rf.Logs = rf.Logs[:args.PrevLogIndex]
+				rf.Logs = append(rf.Logs, args.Entries...)
+				if len(rf.Logs) >= args.LeaderCommit {
+					rf.commitIndex = args.LeaderCommit
+					go rf.commitLogs()
+				}
+				reply.ConfirmIndex = len(rf.Logs)
+				reply.Success = true
+			} else {
+				if len(rf.Logs) >= args.LeaderCommit {
+					rf.commitIndex = args.LeaderCommit
+					go rf.commitLogs()
+				}
+				reply.ConfirmIndex = args.PrevLogIndex
+				reply.Success = true
+			}
+		}
+		reply.ConfirmIndex++
+		rf.persist()
+		rf.resetTimer()
 }
 
 func minInt(x int, y int) int {
@@ -364,8 +417,8 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 		}
 
 		if majorCount >= len(rf.peers)/2 && rf.commitIndex < rf.matchIndex[server] {
-			cpos, _ := findLogByIndex(rf.Logs, rf.matchIndex[server])
-			if rf.CurrentTerm == rf.Logs[cpos].Term {
+			//cpos, _ := findLogByIndex(rf.Logs, rf.matchIndex[server])
+			if rf.CurrentTerm == rf.Logs[rf.matchIndex[server]-1].Term {
 				rf.commitIndex = rf.matchIndex[server]
 					go rf.commitLogs()
 			}
@@ -373,8 +426,8 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 	} else {
 		fmt.Println("shit! reply for", server," append false!, dec and try another time!")
 		rf.nextIndex[server] = reply.ConfirmIndex
-		//rf.appendToFollowers()
-		rf.appendToFollower(server)
+		rf.appendToFollowers()
+		//rf.appendToFollower(server)
 	}
 }
 
@@ -438,15 +491,24 @@ func (rf *Raft) commitLogs() {
 	}
 
 	if rf.lastApplied < rf.commitIndex {
+		/*
 		startPos := 0
 		aPos, ok := findLogByIndex(rf.Logs, rf.lastApplied)
 		if ok != false {
 			startPos = aPos + 1
 		}
+		*/
+		startPos := 0
+		if rf.lastApplied > 0 {
+			startPos = rf.lastApplied-1
+		}
 
+		/*
 		cPos, _ := findLogByIndex(rf.Logs, rf.commitIndex)
-		fmt.Println("oh!we can start to commit, pos range:", startPos, cPos)
-		for ; startPos <= cPos; startPos++ {
+		*/
+		endPos := rf.commitIndex-1
+		fmt.Println("oh!we can start to commit, pos range:", startPos, endPos)
+		for ; startPos <= endPos; startPos++ {
 			msg := ApplyMsg{
 				Index:       rf.Logs[startPos].Index,
 				Command:     rf.Logs[startPos].Command,
@@ -550,6 +612,7 @@ func (rf *Raft) handleTimer() {
 	rf.resetTimer()
 }
 
+/*
 func findLogByIndex(logs []Log, index int) (pos int, ok bool) {
 	if len(logs) <= 0 {
 		return -1, false
@@ -569,6 +632,7 @@ func findLogByIndex(logs []Log, index int) (pos int, ok bool) {
 
 	return pos, ok
 }
+*/
 
 //向其他raft节点发送Append Entries
 func (rf *Raft) appendToFollowers() {
@@ -595,13 +659,20 @@ func (rf *Raft) appendToFollower(sever int) {
 	n := rf.nextIndex[i]
 	if n >= 1 {
 		fmt.Println("have index to send!!it's:", n)
+		/*
 		if pos, ok := findLogByIndex(rf.Logs, n); ok == true {
-			fmt.Println("find index result:", ok)
-			if pos > 0 {
-				args.PrevLogTerm = rf.Logs[pos-1].Term
-				args.PrevLogIndex = n - 1
+		*/
+		if len(rf.Logs) >= n {
+			//fmt.Println("find index result:", ok)
+			//if pos > 0 {
+			if n == 1 {
+				args.PrevLogTerm = 0
+			} else {
+				args.PrevLogTerm = rf.Logs[n-2].Term
 			}
-			args.Entries = rf.Logs[pos:]
+			args.PrevLogIndex = n - 1
+			//}
+			args.Entries = rf.Logs[n-1:]
 			fmt.Println("we add logs to appentry, the entry become:", args)
 		} else {
 			if num := len(rf.Logs); num > 0 {
