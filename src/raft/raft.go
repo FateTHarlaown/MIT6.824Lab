@@ -21,7 +21,7 @@ import "sync"
 import "labrpc"
 import "time"
 import "math/rand"
-import "fmt"
+//import "fmt"
 import "bytes"
 import "encoding/gob"
 
@@ -179,7 +179,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	fmt.Println("I am", rf.me, "i get a vote request:", args, "my term is:", rf.CurrentTerm)
+	//fmt.Println("I am", rf.me, "i get a vote request:", args, "my term is:", rf.CurrentTerm)
 	willVote := true
 	willReset := false
 
@@ -212,7 +212,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.persist()
 		//willReset = true
 	}
-	fmt.Println("I am", rf.me, "i get a vote request:", args, "my ans is:", reply)
+	//fmt.Println("I am", rf.me, "i get a vote request:", args, "my ans is:", reply)
 	if willReset == true {
 		rf.resetTimer()
 	}
@@ -248,7 +248,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	fmt.Println("I am", rf.me, "sending vote request to", server, "args:", args)
+	//fmt.Println("I am", rf.me, "sending vote request to", server, "args:", args)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -396,7 +396,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 		return
 	}
 
-	fmt.Println("I am", rf.me, "and get a reply:", reply)
+	//fmt.Println("I am", rf.me, "and get a reply:", reply)
 	if reply.Success == true {
 		n := len(rf.Logs)
 		if n == 0 {
@@ -424,7 +424,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 			}
 		}
 	} else {
-		fmt.Println("shit! reply for", server," append false!, dec and try another time!")
+		//fmt.Println("shit! reply for", server," append false!, dec and try another time!")
 		rf.nextIndex[server] = reply.ConfirmIndex
 		rf.appendToFollowers()
 		//rf.appendToFollower(server)
@@ -473,7 +473,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = newIndex
 		term = rf.CurrentTerm
 		isLeader = true
-		fmt.Println("Leader:", rf.me, "have append log:", index)
+		//fmt.Println("Leader:", rf.me, "have append log:", index)
 	}
 
 	return index, term, isLeader
@@ -484,7 +484,7 @@ func (rf *Raft) commitLogs() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	fmt.Println("I'm:", rf.me, "role:", rf.state, "start to commitlog, logs:", rf.Logs)
+	//fmt.Println("I'm:", rf.me, "role:", rf.state, "start to commitlog, logs:", rf.Logs)
 	n := len(rf.Logs)
 	if n == 0 {
 		return
@@ -507,7 +507,7 @@ func (rf *Raft) commitLogs() {
 		cPos, _ := findLogByIndex(rf.Logs, rf.commitIndex)
 		*/
 		endPos := rf.commitIndex-1
-		fmt.Println("oh!we can start to commit, pos range:", startPos, endPos)
+		//fmt.Println("oh!we can start to commit, pos range:", startPos, endPos)
 		for ; startPos <= endPos; startPos++ {
 			msg := ApplyMsg{
 				Index:       rf.Logs[startPos].Index,
@@ -515,9 +515,9 @@ func (rf *Raft) commitLogs() {
 				UseSnapshot: false,
 				Snapshot:    []byte{},
 			}
-			fmt.Println("to apply index:", msg.Index)
+			//fmt.Println("to apply index:", msg.Index)
 			rf.applyCh <- msg
-			fmt.Println("have applied index:", msg.Index)
+			//fmt.Println("have applied index:", msg.Index)
 			rf.lastApplied = msg.Index
 		}
 	}
@@ -569,9 +569,9 @@ func (rf *Raft) handleTimer() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	fmt.Println("raft:", rf.me, "timeout! state:", rf.state, "logs:", rf.Logs, "term:", rf.CurrentTerm)
+	//fmt.Println("raft:", rf.me, "timeout! state:", rf.state, "logs:", rf.Logs, "term:", rf.CurrentTerm)
 	if rf.state == LEADER {
-		fmt.Println("leader heartbeat, show raft:", rf.me, "log state:", rf.Logs)
+		//fmt.Println("leader heartbeat, show raft:", rf.me, "log state:", rf.Logs)
 		rf.appendToFollowers()
 	} else { // start a leader election
 
@@ -601,7 +601,7 @@ func (rf *Raft) handleTimer() {
 
 			go func(sever int, args RequestVoteArgs) {
 				reply_args := RequestVoteReply{}
-				fmt.Println("I am", rf.me, rf.state, "I am sending Request vote !", args)
+				//fmt.Println("I am", rf.me, rf.state, "I am sending Request vote !", args)
 				ok := rf.sendRequestVote(sever, &args, &reply_args)
 				if ok != false {
 					rf.handleVoteReply(&reply_args)
@@ -658,7 +658,7 @@ func (rf *Raft) appendToFollower(sever int) {
 	i := sever
 	n := rf.nextIndex[i]
 	if n >= 1 {
-		fmt.Println("have index to send!!it's:", n)
+		//fmt.Println("have index to send!!it's:", n)
 		/*
 		if pos, ok := findLogByIndex(rf.Logs, n); ok == true {
 		*/
@@ -673,7 +673,7 @@ func (rf *Raft) appendToFollower(sever int) {
 			args.PrevLogIndex = n - 1
 			//}
 			args.Entries = rf.Logs[n-1:]
-			fmt.Println("we add logs to appentry, the entry become:", args)
+			//fmt.Println("we add logs to appentry, the entry become:", args)
 		} else {
 			if num := len(rf.Logs); num > 0 {
 				args.PrevLogIndex = rf.Logs[num-1].Index
@@ -681,7 +681,7 @@ func (rf *Raft) appendToFollower(sever int) {
 			}
 		}
 	}
-	fmt.Println("I am", rf.me, "a", rf.state, "I am sending append enties, to:", sever, "aargs:", args)
+	//fmt.Println("I am", rf.me, "a", rf.state, "I am sending append enties, to:", sever, "aargs:", args)
 	go func(server int, args AppendEntryArgs) {
 		reply := AppendEntryReply{}
 		ok := rf.sendAppendEntries(server, &args, &reply)
@@ -709,7 +709,7 @@ func (rf *Raft) resetTimer() {
 	}
 	rf.timer.Reset(timeOut)
 	initchan <- 2
-	fmt.Println("Reset", rf.me, "timer, it's", rf.state, "dtime:", timeOut, "logs:", rf.Logs, "term:", rf.CurrentTerm)
+	//fmt.Println("Reset", rf.me, "timer, it's", rf.state, "dtime:", timeOut, "logs:", rf.Logs, "term:", rf.CurrentTerm)
 }
 
 //
@@ -725,7 +725,7 @@ func (rf *Raft) resetTimer() {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	fmt.Print("start to init a raft node:  ", me, "      ")
+	//fmt.Print("start to init a raft node:  ", me, "      ")
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister

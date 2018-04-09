@@ -113,7 +113,7 @@ func TestFailAgree2B(t *testing.T) {
 	leader := cfg.checkOneLeader()
 	cfg.disconnect((leader + 1) % servers)
 
-	fmt.Println("have killed:", (leader+1)%servers)
+	//fmt.Println("have killed:", (leader+1)%servers)
 	// agree despite one disconnected server?
 	cfg.one(102, servers-1)
 	cfg.one(103, servers-1)
@@ -123,7 +123,7 @@ func TestFailAgree2B(t *testing.T) {
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
-	fmt.Println("have restart:", (leader+1)%servers)
+	//fmt.Println("have restart:", (leader+1)%servers)
 	// agree with full set of servers?
 	cfg.one(106, servers)
 	time.Sleep(RaftElectionTimeout)
@@ -337,12 +337,12 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
-	fmt.Println("step1 finish: disconnected 3 raft!!")
+	//fmt.Println("step1 finish: disconnected 3 raft!!")
 	// submit lots of commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader1].Start(rand.Int())
 	}
-	fmt.Println("step2 finish: submit lots 50 commands that won't commit!!")
+	//fmt.Println("step2 finish: submit lots 50 commands that won't commit!!")
 
 	time.Sleep(RaftElectionTimeout / 2)
 
@@ -353,12 +353,12 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
-	fmt.Println("step3 finish: disconnect leader1 and connected others!!")
+	//fmt.Println("step3 finish: disconnect leader1 and connected others!!")
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3)
 	}
-	fmt.Println("step4 finish: submit lots 50 commands that will commit!!")
+	//fmt.Println("step4 finish: submit lots 50 commands that will commit!!")
 	// now another partitioned leader and one follower
 	leader2 := cfg.checkOneLeader()
 	other := (leader1 + 2) % servers
@@ -366,12 +366,12 @@ func TestBackup2B(t *testing.T) {
 		other = (leader2 + 1) % servers
 	}
 	cfg.disconnect(other)
-	fmt.Println("step5 finish: close one from group2!")
+	//fmt.Println("step5 finish: close one from group2!")
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader2].Start(rand.Int())
 	}
-	fmt.Println("step6 finish: put 50 logs that can not commit!")
+	//fmt.Println("step6 finish: put 50 logs that can not commit!")
 	time.Sleep(RaftElectionTimeout / 2)
 
 	// bring original leader back to life,
@@ -381,12 +381,12 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
-	fmt.Println("step7 finish: re connect all!")
+	//fmt.Println("step7 finish: re connect all!")
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3)
 	}
-	fmt.Println("step8 finish: put 50 logs that will commit!")
+	//fmt.Println("step8 finish: put 50 logs that will commit!")
 	// now everyone
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
@@ -561,39 +561,39 @@ func TestPersist22C(t *testing.T) {
 
 	index := 1
 	for iters := 0; iters < 5; iters++ {
-		fmt.Println("Turn:", iters)
-		fmt.Println("Put 1 val", 10+index)
+		//fmt.Println("Turn:", iters)
+		//fmt.Println("Put 1 val", 10+index)
 		cfg.one(10+index, servers)
 		index++
 
-		fmt.Println("Make sure the set had a leader")
+		//fmt.Println("Make sure the set had a leader")
 		leader1 := cfg.checkOneLeader()
 		cfg.disconnect((leader1 + 1) % servers)
 		cfg.disconnect((leader1 + 2) % servers)
-		fmt.Println("close ", (leader1+1)%servers, (leader1+2)%servers, "Put 2 val", 10+index)
+		//fmt.Println("close ", (leader1+1)%servers, (leader1+2)%servers, "Put 2 val", 10+index)
 		cfg.one(10+index, servers-2)
 		index++
 
-		fmt.Println("close:",  (leader1+0)%servers, (leader1+3)%servers, (leader1+4)%servers)
+		//fmt.Println("close:",  (leader1+0)%servers, (leader1+3)%servers, (leader1+4)%servers)
 		cfg.disconnect((leader1 + 0) % servers)
 		cfg.disconnect((leader1 + 3) % servers)
 		cfg.disconnect((leader1 + 4) % servers)
 
-		fmt.Println("restart node:", (leader1+1)%servers, (leader1+2)%servers)
+		//fmt.Println("restart node:", (leader1+1)%servers, (leader1+2)%servers)
 		cfg.start1((leader1 + 1) % servers)
 		cfg.start1((leader1 + 2) % servers)
 		cfg.connect((leader1 + 1) % servers)
 		cfg.connect((leader1 + 2) % servers)
 		time.Sleep(RaftElectionTimeout)
 
-		fmt.Println("restart node:", (leader1+3)%servers)
+		//fmt.Println("restart node:", (leader1+3)%servers)
 		cfg.start1((leader1 + 3) % servers)
 		cfg.connect((leader1 + 3) % servers)
-		fmt.Println("Put 3 val:", 10+index)
+		//fmt.Println("Put 3 val:", 10+index)
 		cfg.one(10+index, servers-2)
 		index++
 
-		fmt.Println("restart node: ", leader1+4, leader1+0)
+		//fmt.Println("restart node: ", leader1+4, leader1+0)
 		cfg.connect((leader1 + 4) % servers)
 		cfg.connect((leader1 + 0) % servers)
 	}
@@ -650,44 +650,44 @@ func TestFigure82C(t *testing.T) {
 
 	fmt.Printf("Test (2C): Figure 8 ...\n")
 
-	fmt.Println("Start first one!")
+	//fmt.Println("Start first one!")
 	cfg.one(rand.Int(), 1)
-	fmt.Println("Agree first one!: ")
+	//fmt.Println("Agree first one!: ")
 	nup := servers
-	fmt.Println("BEGIN 1000 test!")
+	//fmt.Println("BEGIN 1000 test!")
 	for iters := 0; iters < 1000; iters++ {
 		leader := -1
-		fmt.Println("turn: ", iters)
+		//fmt.Println("turn: ", iters)
 		for i := 0; i < servers; i++ {
 			if cfg.rafts[i] != nil {
-				fmt.Println("check raft", i, " role")
+				//fmt.Println("check raft", i, " role")
 				_, _, ok := cfg.rafts[i].Start(rand.Int())
 				if ok {
-					fmt.Println("raft",i, "is leader")
+					//fmt.Println("raft",i, "is leader")
 					leader = i
 				}
 			}
 		}
 
 		if (rand.Int() % 1000) < 100 {
-			fmt.Println("short sleep and leader ", leader, "will crash")
+			//fmt.Println("short sleep and leader ", leader, "will crash")
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		} else {
-			fmt.Println("long sleep and leader", leader, "will crash!")
+			//fmt.Println("long sleep and leader", leader, "will crash!")
 			ms := (rand.Int63() % 13)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
 
 		if leader != -1 {
-			fmt.Println("leadr", leader, "crash")
+			//fmt.Println("leadr", leader, "crash")
 			cfg.crash1(leader)
 			nup -= 1
 		}
 
 		if nup < 3 {
 			s := rand.Int() % servers
-			fmt.Println("start a raft:", s)
+			//fmt.Println("start a raft:", s)
 			if cfg.rafts[s] == nil {
 				cfg.start1(s)
 				cfg.connect(s)
@@ -696,7 +696,7 @@ func TestFigure82C(t *testing.T) {
 		}
 	}
 
-	fmt.Println("start all raft!")
+	//fmt.Println("start all raft!")
 	for i := 0; i < servers; i++ {
 		if cfg.rafts[i] == nil {
 			cfg.start1(i)
@@ -704,7 +704,7 @@ func TestFigure82C(t *testing.T) {
 		}
 	}
 
-	fmt.Println("AGREE last one")
+	//fmt.Println("AGREE last one")
 	cfg.one(rand.Int(), servers)
 
 	fmt.Printf("  ... Passed\n")
@@ -789,7 +789,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
-	fmt.Println("LAST AGREE")
+	//fmt.Println("LAST AGREE")
 	cfg.one(rand.Int()%10000, servers)
 
 	fmt.Printf("  ... Passed\n")
