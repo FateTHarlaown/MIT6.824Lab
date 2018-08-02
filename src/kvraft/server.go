@@ -17,11 +17,27 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+const (
+	GET = "get"
+	APPEND = "append"
+	PUT = "put"
+)
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Type string
+	Key string
+	Value string
+	ClerkId uint64
+	Seq uint64
+}
+
+type WaitingOp struct {
+	WaitCh chan bool
+	ClerkId uint64
+	OpSeq uint64
 }
 
 type RaftKV struct {
@@ -33,11 +49,26 @@ type RaftKV struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	KVMap map[string]string
+	opSeqMap map[uint64]uint64
+	waitOps map[int][] *WaitingOp
 }
 
 
 func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	op := Op{}
+	op.ClerkId = args.ClerkId
+	op.Seq = args.OpSeq
+	op.Type = GET
+
+
+	index, _, isLeader := kv.rf.Start(op)
+	if !isLeader {
+		reply.WrongLeader = false
+	} else {
+		ok := <-
+	}
 }
 
 func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
@@ -78,11 +109,42 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.maxraftstate = maxraftstate
 
 	// You may need initialization code here.
-
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
+	kv.KVMap = make(map[string]string)
+	kv.opSeqMap = make(map[uint64]uint64)
+	kv.waitOps = make(map[int][]*WaitingOp)
 	// You may need initialization code here.
+	go func() {
+		msg := <-kv.applyCh
+		kv.ExeuteApplyMsg(msg)
+	}()
 
 	return kv
+}
+
+func (kv *RaftKV)ExeuteApplyMsg(msg raft.ApplyMsg) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	op := msg.Command.(Op)
+	if seq, ok := kv.opSeqMap[op.ClerkId]; !ok || seq < op.Seq {
+		switch op.Type {
+		//todo:finish PUT and GET
+		case PUT:
+
+		case APPEND:
+
+		}
+	}
+
+	if waiters, ok := kv.waitOps[msg.Index]; ok {
+		for _, w := range waiters {
+			if w.ClerkId == op.ClerkId && w.OpSeq == op.Seq{
+				w.WaitCh<-true
+			} else {
+				w.WaitCh<-false
+			}
+		}
+	}
 }
