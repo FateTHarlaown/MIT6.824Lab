@@ -6,9 +6,10 @@ import (
 	"log"
 	"raft"
 	"sync"
+	"time"
 )
 
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -17,27 +18,23 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-const (
-	GET = "get"
-	APPEND = "append"
-	PUT = "put"
-)
+const TIMEOUT = 600
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Type string
-	Key string
-	Value string
+	Type    string
+	Key     string
+	Value   string
 	ClerkId uint64
-	Seq uint64
+	Seq     uint64
 }
 
 type WaitingOp struct {
-	WaitCh chan bool
+	WaitCh  chan bool
 	ClerkId uint64
-	OpSeq uint64
+	OpSeq   uint64
 }
 
 type RaftKV struct {
@@ -49,30 +46,103 @@ type RaftKV struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	KVMap map[string]string
+	KVMap    map[string]string
 	opSeqMap map[uint64]uint64
-	waitOps map[int][] *WaitingOp
+	waitOps  map[int][]*WaitingOp
 }
-
 
 func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	op := Op{}
+	op.Key = args.Key
 	op.ClerkId = args.ClerkId
 	op.Seq = args.OpSeq
 	op.Type = GET
+	DPrintf("KVRaft %v Enter Get handler op:%v ", kv.me, op)
 
-
+	DPrintf("KVRaft %v Get handler call raft start op: %v", kv.me, op)
 	index, _, isLeader := kv.rf.Start(op)
-	if !isLeader {
-		reply.WrongLeader = false
-	} else {
-		ok := <-
+	DPrintf("KVRaft %v Get handler call raft start op: %v", kv.me, op)
+	waiter := WaitingOp{
+		WaitCh:  make(chan bool, 1),
+		ClerkId: args.ClerkId,
+		OpSeq:   args.OpSeq,
 	}
+	kv.mu.Lock()
+	kv.waitOps[index] = append(kv.waitOps[index], &waiter)
+	kv.mu.Unlock()
+
+	timer := time.NewTimer(time.Millisecond * TIMEOUT)
+	var ok bool
+	if !isLeader {
+		reply.WrongLeader = true
+	} else {
+		reply.WrongLeader = false
+		select {
+		case ok = <-waiter.WaitCh:
+			if ok {
+				if val, ok := kv.KVMap[args.Key]; ok {
+					reply.Err = OK
+					reply.Value = val
+				} else {
+					reply.Err = ErrNoKey
+				}
+			} else {
+				reply.Err = ErrLeaderChange
+			}
+		case <-timer.C:
+			reply.Err = ErrTimeOut
+		}
+	}
+
+	kv.mu.Lock()
+	delete(kv.waitOps, index)
+	kv.mu.Unlock()
 }
 
 func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	op := Op{}
+	op.Key = args.Key
+	op.Value = args.Value
+	op.ClerkId = args.ClerkId
+	op.Seq = args.OpSeq
+	op.Type = args.OpType
+	DPrintf("KVRaft %v Enter PutAppend handler op:%v ", kv.me, op)
+
+	DPrintf("KVRaft %v PutAppend handler call raft start op: %v", kv.me, op)
+	index, _, isLeader := kv.rf.Start(op)
+	DPrintf("KVRaft %v PutAppend handler call raft start return index:%v isleader:%v", kv.me, index, isLeader)
+	waiter := WaitingOp{
+		WaitCh:  make(chan bool, 1),
+		ClerkId: args.ClerkId,
+		OpSeq:   args.OpSeq,
+	}
+	kv.mu.Lock()
+	kv.waitOps[index] = append(kv.waitOps[index], &waiter)
+	kv.mu.Unlock()
+
+	timer := time.NewTimer(time.Millisecond * TIMEOUT)
+	var ok bool
+	if !isLeader {
+		reply.WrongLeader = true
+	} else {
+		reply.WrongLeader = false
+		select {
+		case ok = <-waiter.WaitCh:
+			if ok {
+				reply.Err = OK
+			} else {
+				reply.Err = ErrLeaderChange
+			}
+		case <-timer.C:
+			reply.Err = ErrTimeOut
+		}
+	}
+
+	kv.mu.Lock()
+	delete(kv.waitOps, index)
+	kv.mu.Unlock()
 }
 
 //
@@ -116,35 +186,42 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.waitOps = make(map[int][]*WaitingOp)
 	// You may need initialization code here.
 	go func() {
-		msg := <-kv.applyCh
-		kv.ExeuteApplyMsg(msg)
+		for {
+			msg := <-kv.applyCh
+			kv.ExeuteApplyMsg(msg)
+		}
 	}()
 
 	return kv
 }
 
-func (kv *RaftKV)ExeuteApplyMsg(msg raft.ApplyMsg) {
+func (kv *RaftKV) ExeuteApplyMsg(msg raft.ApplyMsg) {
+	DPrintf("Raftkv:%v Enter Exe msg:%v", kv.me, msg)
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-
+	DPrintf("Raftkv:%v Exe msg:%v", kv.me, msg)
 	op := msg.Command.(Op)
 	if seq, ok := kv.opSeqMap[op.ClerkId]; !ok || seq < op.Seq {
 		switch op.Type {
-		//todo:finish PUT and GET
+		//'get' don't need to do anything
 		case PUT:
-
+			kv.KVMap[op.Key] = op.Value
 		case APPEND:
-
+			kv.KVMap[op.Key] = kv.KVMap[op.Key] + op.Value
 		}
 	}
+
+	kv.opSeqMap[op.ClerkId] = op.Seq
 
 	if waiters, ok := kv.waitOps[msg.Index]; ok {
 		for _, w := range waiters {
-			if w.ClerkId == op.ClerkId && w.OpSeq == op.Seq{
-				w.WaitCh<-true
+			if w.ClerkId == op.ClerkId && w.OpSeq == op.Seq {
+				w.WaitCh <- true
 			} else {
-				w.WaitCh<-false
+				w.WaitCh <- false
 			}
 		}
 	}
+
+	DPrintf("KvRaft %v Exe msg %v finish!!", kv.me, msg)
 }

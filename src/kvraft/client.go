@@ -3,6 +3,7 @@ package raftkv
 import "labrpc"
 import "crypto/rand"
 import (
+	"fmt"
 	"math/big"
 	"sync/atomic"
 )
@@ -29,7 +30,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.servers = servers
 	// You'll have to add code here.
 	ck.id = atomic.AddUint64(&ClerkSeq, 1)
-	ck.leaderId = -1
+	ck.leaderId = 0
 	return ck
 }
 
@@ -48,13 +49,6 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
-	var nextServer int
-	if ck.leaderId == -1 {
-		nextServer = 0
-	} else {
-		nextServer = ck.leaderId
-	}
-
 	ret := ""
 	i := -1
 	for {
@@ -65,16 +59,14 @@ func (ck *Clerk) Get(key string) string {
 			OpSeq:   atomic.AddUint64(&ck.NextOpSeq, 1),
 		}
 		reply := &GetReply{}
-		ok := ck.servers[(nextServer+i)%len(ck.servers)].Call("RaftKV.Get", args, reply)
-		if ok {
-			//只有成功的调用到了leader才认为Get操作成功
-			if !reply.WrongLeader {
-				ck.leaderId = (nextServer + i) % len(ck.servers)
-				if reply.Err == OK {
-					ret = reply.Value
-				}
-				break
-			}
+		DPrintf("Enter Get: args:%v", args)
+		ok := ck.servers[(ck.leaderId+i)%len(ck.servers)].Call("RaftKV.Get", args, reply)
+		DPrintf("A RaftKV.Get PRC return args:%v reply:%v", args, reply)
+		//只有成功的调用到了leader,并且获取到值或者key不存在才认为Get操作成功
+		if ok && !reply.WrongLeader && (reply.Err == OK || reply.Err == ErrNoKey) {
+			ck.leaderId = (ck.leaderId + i) % len(ck.servers)
+			ret = reply.Value
+			break
 		}
 	}
 
@@ -93,11 +85,34 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	i := -1
+	for {
+		i++
+		args := &PutAppendArgs{
+			Key:     key,
+			Value:   value,
+			OpType:  op,
+			ClerkId: ck.id,
+			OpSeq:   atomic.AddUint64(&ck.NextOpSeq, 1),
+		}
+
+		reply := &PutAppendReply{}
+		DPrintf("Enter PutAppend: args:%v", args)
+		ok := ck.servers[(ck.leaderId+i)%len(ck.servers)].Call("RaftKV.PutAppend", args, reply)
+		DPrintf("A RaftKV.PutAppend PRC return args:%v reply:%v", args, reply)
+		if ok && !reply.WrongLeader && reply.Err == OK {
+			ck.leaderId = (ck.leaderId + i) % len(ck.servers)
+			break
+		}
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	DPrintf("client call:Put  key:%v  values:%v", key, value)
+	fmt.Println("client call:Put ", key, " ", value)
+	ck.PutAppend(key, value, PUT)
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	DPrintf("client call:Append  key:%v  values:%v", key, value)
+	ck.PutAppend(key, value, APPEND)
 }
