@@ -3,7 +3,6 @@ package raftkv
 import "labrpc"
 import "crypto/rand"
 import (
-	"fmt"
 	"math/big"
 	"sync/atomic"
 )
@@ -51,12 +50,13 @@ func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
 	ret := ""
 	i := -1
+	nextSeq := atomic.AddUint64(&ck.NextOpSeq, 1)
 	for {
 		i++
 		args := &GetArgs{
 			Key:     key,
 			ClerkId: ck.id,
-			OpSeq:   atomic.AddUint64(&ck.NextOpSeq, 1),
+			OpSeq:   nextSeq,
 		}
 		reply := &GetReply{}
 		DPrintf("Enter Get: args:%v", args)
@@ -86,6 +86,7 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	i := -1
+	nextSeq := atomic.AddUint64(&ck.NextOpSeq, 1)
 	for {
 		i++
 		args := &PutAppendArgs{
@@ -93,7 +94,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			Value:   value,
 			OpType:  op,
 			ClerkId: ck.id,
-			OpSeq:   atomic.AddUint64(&ck.NextOpSeq, 1),
+			OpSeq:   nextSeq,
 		}
 
 		reply := &PutAppendReply{}
@@ -109,7 +110,6 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 
 func (ck *Clerk) Put(key string, value string) {
 	DPrintf("client call:Put  key:%v  values:%v", key, value)
-	fmt.Println("client call:Put ", key, " ", value)
 	ck.PutAppend(key, value, PUT)
 }
 func (ck *Clerk) Append(key string, value string) {
