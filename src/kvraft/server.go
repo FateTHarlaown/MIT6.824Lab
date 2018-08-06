@@ -58,7 +58,6 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
 	op.ClerkId = args.ClerkId
 	op.Seq = args.OpSeq
 	op.Type = GET
-	DPrintf("KVRaft %v Enter Get handler op:%v ", kv.me, op)
 
 	DPrintf("KVRaft %v Get handler call raft start op: %v", kv.me, op)
 	index, _, isLeader := kv.rf.Start(op)
@@ -108,7 +107,6 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	op.ClerkId = args.ClerkId
 	op.Seq = args.OpSeq
 	op.Type = args.OpType
-	DPrintf("KVRaft %v Enter PutAppend handler op:%v ", kv.me, op)
 
 	DPrintf("KVRaft %v PutAppend handler call raft start op: %v", kv.me, op)
 	index, _, isLeader := kv.rf.Start(op)
