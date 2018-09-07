@@ -207,9 +207,8 @@ func (kv *RaftKV) ExeuteApplyMsg(msg raft.ApplyMsg) {
 		case APPEND:
 			kv.KVMap[op.Key] = kv.KVMap[op.Key] + op.Value
 		}
+		kv.opSeqMap[op.ClerkId] = op.Seq
 	}
-
-	kv.opSeqMap[op.ClerkId] = op.Seq
 
 	if waiters, ok := kv.waitOps[msg.Index]; ok {
 		for _, w := range waiters {
