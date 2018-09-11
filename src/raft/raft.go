@@ -21,8 +21,6 @@ import "sync"
 import "labrpc"
 import "time"
 import "math/rand"
-
-//import "fmt"
 import "bytes"
 import "encoding/gob"
 
@@ -54,6 +52,7 @@ const (
 //
 type ApplyMsg struct {
 	Index       int
+	Term        int
 	Command     interface{}
 	UseSnapshot bool   // ignore for lab2; only used in lab3
 	Snapshot    []byte // ignore for lab2; only used in lab3
@@ -81,9 +80,11 @@ type Raft struct {
 	matchIndex []int
 	beVoted    int
 
-	state   string
-	applyCh chan ApplyMsg
-	timer   *time.Timer
+	lastIncludeIndex int
+	lastIncludeTerm  int
+	state            string
+	applyCh          chan ApplyMsg
+	timer            *time.Timer
 }
 
 // return currentTerm and whether this server
@@ -113,6 +114,8 @@ func (rf *Raft) persist() {
 	e.Encode(rf.VotedFor)
 	e.Encode(rf.CurrentTerm)
 	e.Encode(rf.Logs)
+	e.Encode(rf.lastIncludeIndex)
+	e.Encode(rf.lastIncludeTerm)
 	data := w.Bytes()
 	rf.persister.SaveRaftState(data)
 }
@@ -131,6 +134,40 @@ func (rf *Raft) readPersist(data []byte) {
 	d.Decode(&rf.VotedFor)
 	d.Decode(&rf.CurrentTerm)
 	d.Decode(&rf.Logs)
+	d.Decode(&rf.lastIncludeIndex)
+	d.Decode(&rf.lastIncludeTerm)
+}
+
+func (rf *Raft) RaftStateSize() int {
+	return rf.persister.RaftStateSize()
+}
+
+func (rf *Raft) ReadSnapshot() []byte {
+	return rf.persister.ReadSnapshot()
+}
+
+func (rf *Raft) SaveSnapshot(data []byte, index int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	pos, ok := rf.getLogPos(index)
+	if ok {
+		rf.lastIncludeIndex = index
+		rf.lastIncludeTerm = rf.Logs[pos].Term
+		rf.Logs = rf.Logs[pos:] //the log at pos will not be discard
+		rf.persist()
+		rf.persister.SaveSnapshotAndRaftState(data, rf.persister.ReadRaftState())
+	}
+}
+
+func (rf *Raft) getLogPos(index int) (int, bool) {
+	ok := false
+	n := len(rf.Logs)
+	pos := -1
+	if n > 0 && index >= rf.Logs[0].Index && rf.Logs[n-1].Index >= index {
+		pos = index - rf.Logs[0].Index
+		ok = true
+	}
+	return pos, ok
 }
 
 //
@@ -328,33 +365,52 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.VotedFor = -1
 		reply.Term = args.Term
 		// Since at first, leader communicates with followers,
-		// nextIndex[server] value equal to len(leader.logs)
+		// nextIndex[server] value equal to max index of leader
 		// so system need to find the matching term and index
-		if args.PrevLogIndex > 0 &&
-			(len(rf.Logs) < args.PrevLogIndex || rf.Logs[args.PrevLogIndex-1].Term != args.PrevLogTerm) {
+		n := len(rf.Logs)
+		prevIndexPos, ok := rf.getLogPos(args.PrevLogIndex)
+		if n > 0 && (args.PrevLogIndex-rf.Logs[0].Index) < 0 {
+			reply.ConfirmIndex = rf.Logs[0].Index
+			reply.Success = false
+		} else if (n > 0 && !ok) ||
+			(ok && args.PrevLogTerm != rf.Logs[prevIndexPos].Term) {
 			// rf.logger.Printf("Match failed %v\n", args)
-			reply.ConfirmIndex = len(rf.Logs)
+			reply.ConfirmIndex = rf.Logs[n-1].Index
 			if reply.ConfirmIndex > args.PrevLogIndex {
 				reply.ConfirmIndex = args.PrevLogIndex
 			}
-			for reply.ConfirmIndex > 0 {
-				if rf.Logs[reply.ConfirmIndex-1].Term == args.PrevLogTerm {
+			for reply.ConfirmIndex >= rf.commitIndex {
+				pos, ok := rf.getLogPos(reply.ConfirmIndex)
+				if ok && rf.Logs[pos].Term == args.PrevLogTerm {
 					break
 				}
 				reply.ConfirmIndex--
 			}
 			reply.Success = false
+		} else if n == 0 && args.PrevLogIndex != 0 {
+			reply.ConfirmIndex = 0
+			reply.Success = false
 		} else if args.Entries != nil {
-			rf.Logs = rf.Logs[:args.PrevLogIndex]
+			//fmt.Println("I am ", rf.me, "I get appd: ", args.Entries)
+			if n > 0 {
+				pos, _ := rf.getLogPos(args.PrevLogIndex)
+				rf.Logs = rf.Logs[:pos+1]
+				//fmt.Println("I am ", rf.me, "I get cut my logs and get: ", args.Entries)
+			}
 			rf.Logs = append(rf.Logs, args.Entries...)
-			if len(rf.Logs) >= args.LeaderCommit {
+			m := len(rf.Logs)
+			if m > 0 && rf.Logs[m-1].Index >= args.LeaderCommit {
 				rf.commitIndex = args.LeaderCommit
 				go rf.commitLogs()
 			}
-			reply.ConfirmIndex = len(rf.Logs)
+			if m > 0 {
+				reply.ConfirmIndex = rf.Logs[m-1].Index
+			} else {
+				reply.ConfirmIndex = 0
+			}
 			reply.Success = true
 		} else {
-			if len(rf.Logs) >= args.LeaderCommit {
+			if n > 0 && rf.Logs[n-1].Index >= args.LeaderCommit {
 				rf.commitIndex = args.LeaderCommit
 				go rf.commitLogs()
 			}
@@ -418,8 +474,8 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 		}
 
 		if majorCount >= len(rf.peers)/2 && rf.commitIndex < rf.matchIndex[server] {
-			//cpos, _ := findLogByIndex(rf.Logs, rf.matchIndex[server])
-			if rf.CurrentTerm == rf.Logs[rf.matchIndex[server]-1].Term {
+			pos, _ := rf.getLogPos(rf.matchIndex[server])
+			if rf.CurrentTerm == rf.Logs[pos].Term {
 				rf.commitIndex = rf.matchIndex[server]
 				go rf.commitLogs()
 			}
@@ -493,26 +549,18 @@ func (rf *Raft) commitLogs() {
 	}
 
 	if rf.lastApplied < rf.commitIndex {
-		/*
-			startPos := 0
-			aPos, ok := findLogByIndex(rf.Logs, rf.lastApplied)
-			if ok != false {
-				startPos = aPos + 1
-			}
-		*/
 		startPos := 0
 		if rf.lastApplied > 0 {
-			startPos = rf.lastApplied - 1
+			startPos, _ = rf.getLogPos(rf.lastApplied)
+			startPos++
 		}
 
-		/*
-			cPos, _ := findLogByIndex(rf.Logs, rf.commitIndex)
-		*/
-		endPos := rf.commitIndex - 1
+		endPos, _ := rf.getLogPos(rf.commitIndex)
 		//fmt.Println("oh!we can start to commit, pos range:", startPos, endPos)
 		for ; startPos <= endPos; startPos++ {
 			msg := ApplyMsg{
 				Index:       rf.Logs[startPos].Index,
+				Term:        rf.Logs[startPos].Term,
 				Command:     rf.Logs[startPos].Command,
 				UseSnapshot: false,
 				Snapshot:    []byte{},
@@ -650,6 +698,7 @@ func (rf *Raft) appendToFollowers() {
 }
 
 func (rf *Raft) appendToFollower(sever int) {
+	//todo:finish installSnapshot
 	args := AppendEntryArgs{
 		Term:         rf.CurrentTerm,
 		LeaderId:     rf.me,
@@ -660,28 +709,36 @@ func (rf *Raft) appendToFollower(sever int) {
 	}
 
 	i := sever
-	n := rf.nextIndex[i]
-	if n >= 1 {
-		//fmt.Println("have index to send!!it's:", n)
+	next := rf.nextIndex[i]
+	if next >= 1 {
+		//fmt.Println("I am ", rf.me, " send append to ", sever)
+		//fmt.Println("my log: ", rf.Logs)
+		//fmt.Println("have index to send!!it's:", next)
 		/*
 			if pos, ok := findLogByIndex(rf.Logs, n); ok == true {
 		*/
-		if len(rf.Logs) >= n {
+		n := len(rf.Logs)
+		if n > 0 && rf.Logs[n-1].Index >= next {
 			//fmt.Println("find index result:", ok)
 			//if pos > 0 {
-			if n == 1 {
+			pos, ok := rf.getLogPos(next)
+			//fmt.Println("find log to send resule ", pos, " ", ok)
+			if next == 1 {
 				args.PrevLogTerm = 0
 			} else {
-				args.PrevLogTerm = rf.Logs[n-2].Term
+				//todo:finish snapshot RPC when !ok
+				if ok && n > 1 {
+					args.PrevLogTerm = rf.Logs[pos-1].Term
+				}
 			}
-			args.PrevLogIndex = n - 1
+			args.PrevLogIndex = next - 1
 			//}
-			args.Entries = rf.Logs[n-1:]
+			args.Entries = rf.Logs[pos:]
 			//fmt.Println("we add logs to appentry, the entry become:", args)
 		} else {
-			if num := len(rf.Logs); num > 0 {
-				args.PrevLogIndex = rf.Logs[num-1].Index
-				args.PrevLogTerm = rf.Logs[num-1].Term
+			if n > 0 {
+				args.PrevLogIndex = rf.Logs[n-1].Index
+				args.PrevLogTerm = rf.Logs[n-1].Term
 			}
 		}
 	}
@@ -741,6 +798,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.Logs = []Log{}
 	rf.commitIndex = 0
 	rf.lastApplied = 0
+	rf.lastIncludeIndex = 0
+	rf.lastIncludeTerm = 0
 
 	rf.nextIndex = make([]int, len(peers))
 	for i := range rf.nextIndex {

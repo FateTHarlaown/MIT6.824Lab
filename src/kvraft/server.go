@@ -1,6 +1,7 @@
 package raftkv
 
 import (
+	"bytes"
 	"encoding/gob"
 	"labrpc"
 	"log"
@@ -47,7 +48,7 @@ type RaftKV struct {
 
 	// Your definitions here.
 	KVMap    map[string]string
-	opSeqMap map[uint64]uint64
+	OpSeqMap map[uint64]uint64
 	waitOps  map[int][]*WaitingOp
 }
 
@@ -180,8 +181,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.KVMap = make(map[string]string)
-	kv.opSeqMap = make(map[uint64]uint64)
+	kv.OpSeqMap = make(map[uint64]uint64)
 	kv.waitOps = make(map[int][]*WaitingOp)
+	kv.ReadSnapshot()
 	// You may need initialization code here.
 	go func() {
 		for {
@@ -199,7 +201,8 @@ func (kv *RaftKV) ExeuteApplyMsg(msg raft.ApplyMsg) {
 	defer kv.mu.Unlock()
 	DPrintf("Raftkv:%v Exe msg:%v", kv.me, msg)
 	op := msg.Command.(Op)
-	if seq, ok := kv.opSeqMap[op.ClerkId]; !ok || seq < op.Seq {
+	//todo:if use snapshot, update KVMap and opseq
+	if seq, ok := kv.OpSeqMap[op.ClerkId]; !ok || seq < op.Seq {
 		switch op.Type {
 		//'get' don't need to do anything
 		case PUT:
@@ -207,7 +210,12 @@ func (kv *RaftKV) ExeuteApplyMsg(msg raft.ApplyMsg) {
 		case APPEND:
 			kv.KVMap[op.Key] = kv.KVMap[op.Key] + op.Value
 		}
-		kv.opSeqMap[op.ClerkId] = op.Seq
+
+		kv.OpSeqMap[op.ClerkId] = op.Seq
+
+		if kv.maxraftstate <= kv.rf.RaftStateSize() {
+			kv.SaveSnapshot(msg.Index, msg.Term)
+		}
 	}
 
 	if waiters, ok := kv.waitOps[msg.Index]; ok {
@@ -221,4 +229,29 @@ func (kv *RaftKV) ExeuteApplyMsg(msg raft.ApplyMsg) {
 	}
 
 	DPrintf("KvRaft %v Exe msg %v finish!!", kv.me, msg)
+}
+
+func (kv *RaftKV) SaveSnapshot(index int, term int) {
+	DPrintf("save snapshot")
+	buf := new(bytes.Buffer)
+	encoder := gob.NewEncoder(buf)
+	encoder.Encode(kv.KVMap)
+	encoder.Encode(kv.OpSeqMap)
+	encoder.Encode(index)
+	encoder.Encode(term)
+	data := buf.Bytes()
+	kv.rf.SaveSnapshot(data, index)
+}
+
+func (kv *RaftKV) ReadSnapshot() {
+	DPrintf("read snapshot")
+	data := kv.rf.ReadSnapshot()
+	if data == nil || len(data) < 1 {
+		DPrintf("have no snapshot, return")
+	}
+
+	buf := bytes.NewBuffer(data)
+	decoder := gob.NewDecoder(buf)
+	decoder.Decode(&kv.KVMap)
+	decoder.Decode(&kv.OpSeqMap)
 }
