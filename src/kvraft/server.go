@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -81,12 +81,14 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
 		select {
 		case ok = <-waiter.WaitCh:
 			if ok {
+				kv.mu.Lock()
 				if val, ok := kv.KVMap[args.Key]; ok {
 					reply.Err = OK
 					reply.Value = val
 				} else {
 					reply.Err = ErrNoKey
 				}
+				kv.mu.Unlock()
 			} else {
 				reply.Err = ErrLeaderChange
 			}
@@ -200,38 +202,51 @@ func (kv *RaftKV) ExeuteApplyMsg(msg raft.ApplyMsg) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	DPrintf("Raftkv:%v Exe msg:%v", kv.me, msg)
-	op := msg.Command.(Op)
-	//todo:if use snapshot, update KVMap and opseq
-	if seq, ok := kv.OpSeqMap[op.ClerkId]; !ok || seq < op.Seq {
-		switch op.Type {
-		//'get' don't need to do anything
-		case PUT:
-			kv.KVMap[op.Key] = op.Value
-		case APPEND:
-			kv.KVMap[op.Key] = kv.KVMap[op.Key] + op.Value
+	if msg.UseSnapshot {
+		DPrintf("recieve snapshot update")
+		data := msg.Snapshot
+		kv.UpdateBySnapshot(data)
+	} else {
+		op, succ := msg.Command.(Op)
+		//that means this msg is from a dummy log generated when loading snapshot.
+		//the purpose is to make Raft.Logs not empty except after just started
+		if !succ {
+			return
 		}
 
-		kv.OpSeqMap[op.ClerkId] = op.Seq
+		if seq, ok := kv.OpSeqMap[op.ClerkId]; !ok || seq < op.Seq {
+			switch op.Type {
+			//'get' don't need to do anything
+			case PUT:
+				kv.KVMap[op.Key] = op.Value
+			case APPEND:
+				kv.KVMap[op.Key] = kv.KVMap[op.Key] + op.Value
+			}
 
-		if kv.maxraftstate <= kv.rf.RaftStateSize() {
-			kv.SaveSnapshot(msg.Index, msg.Term)
-		}
-	}
+			kv.OpSeqMap[op.ClerkId] = op.Seq
 
-	if waiters, ok := kv.waitOps[msg.Index]; ok {
-		for _, w := range waiters {
-			if w.ClerkId == op.ClerkId && w.OpSeq == op.Seq {
-				w.WaitCh <- true
-			} else {
-				w.WaitCh <- false
+			if kv.maxraftstate != -1 && 2*kv.maxraftstate <= kv.rf.RaftStateSize() {
+				go kv.SaveSnapshot(msg.Index, msg.Term)
 			}
 		}
-	}
 
-	DPrintf("KvRaft %v Exe msg %v finish!!", kv.me, msg)
+		if waiters, ok := kv.waitOps[msg.Index]; ok {
+			for _, w := range waiters {
+				if w.ClerkId == op.ClerkId && w.OpSeq == op.Seq {
+					w.WaitCh <- true
+				} else {
+					w.WaitCh <- false
+				}
+			}
+		}
+
+		DPrintf("KvRaft %v Exe msg %v finish!!", kv.me, msg)
+	}
 }
 
 func (kv *RaftKV) SaveSnapshot(index int, term int) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	DPrintf("save snapshot")
 	buf := new(bytes.Buffer)
 	encoder := gob.NewEncoder(buf)
@@ -240,16 +255,22 @@ func (kv *RaftKV) SaveSnapshot(index int, term int) {
 	encoder.Encode(index)
 	encoder.Encode(term)
 	data := buf.Bytes()
+	DPrintf("call rf save snapshot")
 	kv.rf.SaveSnapshot(data, index)
+	DPrintf("save snapshot finish")
 }
 
 func (kv *RaftKV) ReadSnapshot() {
 	DPrintf("read snapshot")
 	data := kv.rf.ReadSnapshot()
+	kv.UpdateBySnapshot(data)
+}
+
+func (kv *RaftKV) UpdateBySnapshot(data []byte) {
+	DPrintf("update by snapshot")
 	if data == nil || len(data) < 1 {
 		DPrintf("have no snapshot, return")
 	}
-
 	buf := bytes.NewBuffer(data)
 	decoder := gob.NewDecoder(buf)
 	decoder.Decode(&kv.KVMap)

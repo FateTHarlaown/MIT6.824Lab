@@ -25,7 +25,9 @@ func run_client(t *testing.T, cfg *config, me int, ca chan bool, fn func(me int,
 	ok := false
 	defer func() { ca <- ok }()
 	ck := cfg.makeClient(cfg.All())
+	DPrintf("to run client %v", me)
 	fn(me, ck, t)
+	DPrintf("complete run client %v", me)
 	ok = true
 	cfg.deleteClient(ck)
 }
@@ -35,11 +37,13 @@ func spawn_clients_and_wait(t *testing.T, cfg *config, ncli int, fn func(me int,
 	ca := make([]chan bool, ncli)
 	for cli := 0; cli < ncli; cli++ {
 		ca[cli] = make(chan bool)
+		DPrintf("start client %v", cli)
 		go run_client(t, cfg, cli, ca[cli], fn)
 	}
 	// log.Printf("spawn_clients_and_wait: waiting for clients")
 	for cli := 0; cli < ncli; cli++ {
 		ok := <-ca[cli]
+		DPrintf("client finish %v finish", cli)
 		// log.Printf("spawn_clients_and_wait: client %d is done\n", cli)
 		if ok == false {
 			t.Fatalf("failure")
@@ -146,6 +150,7 @@ func GenericTest(t *testing.T, tag string, nclients int, unreliable bool, crash 
 		atomic.StoreInt32(&done_clients, 0)
 		atomic.StoreInt32(&done_partitioner, 0)
 		go spawn_clients_and_wait(t, cfg, nclients, func(cli int, myck *Clerk, t *testing.T) {
+			DPrintf("enter cli %v operation")
 			j := 0
 			defer func() {
 				clnts[cli] <- j
@@ -168,8 +173,10 @@ func GenericTest(t *testing.T, tag string, nclients int, unreliable bool, crash 
 					}
 				}
 			}
-		})
 
+			DPrintf("spawn val finish %v")
+		})
+		DPrintf("after check val %v", i)
 		if partitions {
 			// Allow the clients to perform some operations without interruption
 			time.Sleep(1 * time.Second)
@@ -179,6 +186,7 @@ func GenericTest(t *testing.T, tag string, nclients int, unreliable bool, crash 
 
 		atomic.StoreInt32(&done_clients, 1)     // tell clients to quit
 		atomic.StoreInt32(&done_partitioner, 1) // tell partitioner to quit
+		DPrintf("tell clients to end, turn %v", i)
 
 		if partitions {
 			// log.Printf("wait for partitioner\n")
