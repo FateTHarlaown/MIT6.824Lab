@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const Debug = 1
+const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -225,8 +225,11 @@ func (kv *RaftKV) ExeuteApplyMsg(msg raft.ApplyMsg) {
 
 			kv.OpSeqMap[op.ClerkId] = op.Seq
 
-			if kv.maxraftstate != -1 && 2*kv.maxraftstate <= kv.rf.RaftStateSize() {
-				go kv.SaveSnapshot(msg.Index, msg.Term)
+			if kv.maxraftstate != -1 && kv.maxraftstate <= kv.rf.RaftStateSize() {
+				data := kv.encodeKVData(msg.Index, msg.Term)
+				go func(index int, data []byte) {
+					kv.SaveSnapshot(index, data)
+				}(msg.Index, data)
 			}
 		}
 
@@ -244,10 +247,14 @@ func (kv *RaftKV) ExeuteApplyMsg(msg raft.ApplyMsg) {
 	}
 }
 
-func (kv *RaftKV) SaveSnapshot(index int, term int) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
+func (kv *RaftKV) SaveSnapshot(index int, data []byte) {
 	DPrintf("save snapshot")
+	DPrintf("call rf save snapshot")
+	kv.rf.SaveSnapshot(data, index)
+	DPrintf("save snapshot finish")
+}
+
+func (kv *RaftKV) encodeKVData(index int, term int) []byte {
 	buf := new(bytes.Buffer)
 	encoder := gob.NewEncoder(buf)
 	encoder.Encode(kv.KVMap)
@@ -255,9 +262,7 @@ func (kv *RaftKV) SaveSnapshot(index int, term int) {
 	encoder.Encode(index)
 	encoder.Encode(term)
 	data := buf.Bytes()
-	DPrintf("call rf save snapshot")
-	kv.rf.SaveSnapshot(data, index)
-	DPrintf("save snapshot finish")
+	return data
 }
 
 func (kv *RaftKV) ReadSnapshot() {

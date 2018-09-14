@@ -716,7 +716,7 @@ func (rf *Raft) appendToFollower(sever int) {
 	//fmt.Println("have index to send!!it's:", next)
 	n := len(rf.Logs)
 	DPrintf("I am %v, start to append to %v", rf.me, sever)
-	if n > 0 && rf.Logs[0].Index > next {
+	if n > 0 && rf.Logs[0].Index >= next {
 		args := InstallSnapshotArgs{
 			Term:             rf.CurrentTerm,
 			LeaderId:         rf.me,
@@ -742,8 +742,10 @@ func (rf *Raft) appendToFollower(sever int) {
 			Entries:      []Log{},
 			LeaderCommit: rf.commitIndex,
 		}
+		DPrintf("I'm %v, send appentry to %v, my log: %v, next[%v]:%v", rf.me, sever, rf.Logs, sever, rf.nextIndex[sever])
 		if n > 0 && rf.Logs[n-1].Index >= next {
 			pos, ok := rf.getLogPos(next)
+			DPrintf("getpos ans: %v,%v", pos, ok)
 			if next == 1 {
 				args.PrevLogTerm = 0
 			} else {
