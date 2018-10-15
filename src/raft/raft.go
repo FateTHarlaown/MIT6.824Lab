@@ -316,7 +316,6 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	} else {
 		rf.state = FOLLOWER
 		rf.CurrentTerm = args.Term
-		rf.VotedFor = -1
 		reply.Term = args.Term
 		// Since at first, leader communicates with followers,
 		// nextIndex[server] value equal to max index of leader
@@ -333,7 +332,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 			if reply.ConfirmIndex > args.PrevLogIndex {
 				reply.ConfirmIndex = args.PrevLogIndex
 			}
-			for reply.ConfirmIndex >= rf.commitIndex {
+			for reply.ConfirmIndex > rf.commitIndex && reply.ConfirmIndex > 0 {
 				pos, ok := rf.getLogPos(reply.ConfirmIndex)
 				if ok && rf.Logs[pos].Term == args.PrevLogTerm {
 					break
@@ -494,6 +493,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, reply *AppendEntryReply) {
 	} else {
 		//fmt.Println("shit! reply for", server," append false!, dec and try another time!")
 		rf.nextIndex[server] = reply.ConfirmIndex
+		DPrintf("shit, server %v reply false!, update next[%v]:%v", server, server, reply.ConfirmIndex)
 		rf.appendToFollowers()
 		//rf.appendToFollower(server)
 	}
@@ -716,7 +716,7 @@ func (rf *Raft) appendToFollower(sever int) {
 	//fmt.Println("have index to send!!it's:", next)
 	n := len(rf.Logs)
 	DPrintf("I am %v, start to append to %v", rf.me, sever)
-	if n > 0 && rf.Logs[0].Index >= next {
+	if n > 0 && rf.lastIncludeIndex == rf.Logs[0].Index && rf.Logs[0].Index >= next {
 		args := InstallSnapshotArgs{
 			Term:             rf.CurrentTerm,
 			LeaderId:         rf.me,
