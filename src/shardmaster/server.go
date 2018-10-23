@@ -322,8 +322,8 @@ func (sm *ShardMaster) applyJoin(args JoinArgs) {
 			}
 		}
 		/*
-		   toGid := i % len(newGid)
-		   newConfig.Shards[s] = newGid[toGid]
+			toGid := i % len(newGid)
+			newConfig.Shards[s] = newGid[toGid]
 		*/
 	}
 
