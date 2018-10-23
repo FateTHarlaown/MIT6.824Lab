@@ -3,7 +3,6 @@ package shardmaster
 import (
 	"encoding/gob"
 	"labrpc"
-	"log"
 	"raft"
 	"sync"
 	"time"
@@ -34,15 +33,6 @@ type Op struct {
 	ClerkId uint64
 	Seq     uint64
 	Args    interface{}
-}
-
-const Debug = 1
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug > 0 {
-		log.Printf(format, a...)
-	}
-	return
 }
 
 const TIMEOUT = 600

@@ -14,6 +14,16 @@ import "runtime"
 import "raft"
 import "strconv"
 import "fmt"
+import "log"
+
+const Debug = 1
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug > 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)

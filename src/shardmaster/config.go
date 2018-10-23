@@ -11,6 +11,16 @@ import "math/rand"
 import "encoding/base64"
 import "sync"
 import "runtime"
+import "log"
+
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug > 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
