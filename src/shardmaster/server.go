@@ -419,7 +419,7 @@ func (sm *ShardMaster) getConfigCopy(num int) Config {
 	configCopy := Config{}
 	configCopy.Groups = make(map[int][]string)
 	pos := num
-	if num < 0 || num > NShards {
+	if num < 0 || num >= len(sm.configs) {
 		pos = len(sm.configs) - 1
 	}
 	configRaw := sm.configs[pos]
