@@ -17,7 +17,7 @@ import "math/big"
 import "shardmaster"
 import "time"
 
-var ClerkSeq uint64
+var ClerkSeq uint64 = 0
 
 //
 // which shard is a key in?
@@ -91,6 +91,7 @@ func (ck *Clerk) Get(key string) string {
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply GetReply
+				DPrintf("ck %v call Get arg: %v, to shard:%v", ck.id, args, shard)
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 				if ok && (reply.Err == ErrWrongGroup) {
 					break
@@ -128,6 +129,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply PutAppendReply
+				DPrintf("ck %v call put arg: %v, to shard %v", ck.id, args, shard)
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.WrongLeader == false && reply.Err == OK {
 					return
@@ -140,6 +142,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		time.Sleep(100 * time.Millisecond)
 		// ask master for the latest configuration.
 		ck.config = ck.sm.Query(-1)
+		DPrintf("ck %v get a new config %v", ck.id, ck.config)
 	}
 }
 

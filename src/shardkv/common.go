@@ -18,9 +18,11 @@ const (
 )
 
 const (
-	GET    = "Get"
-	APPEND = "Append"
-	PUT    = "Put"
+	GET       = "Get"
+	APPEND    = "Append"
+	PUT       = "Put"
+	CONFIG    = "Config"
+	MIGRATION = "Migration"
 )
 
 type Err string
@@ -54,4 +56,15 @@ type GetReply struct {
 	WrongLeader bool
 	Err         Err
 	Value       string
+}
+
+type MigrationArgs struct {
+	Shard     int
+	ConfigNum int
+}
+
+type MigrationReply struct {
+	Shard int
+	KV    map[string]string
+	Err   Err
 }
