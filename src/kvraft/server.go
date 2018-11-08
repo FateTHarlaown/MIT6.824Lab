@@ -96,10 +96,6 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
 			reply.Err = ErrTimeOut
 		}
 	}
-
-	kv.mu.Lock()
-	delete(kv.waitOps, index)
-	kv.mu.Unlock()
 }
 
 func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
@@ -140,10 +136,6 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 			reply.Err = ErrTimeOut
 		}
 	}
-
-	kv.mu.Lock()
-	delete(kv.waitOps, index)
-	kv.mu.Unlock()
 }
 
 //
@@ -241,6 +233,7 @@ func (kv *RaftKV) ExeuteApplyMsg(msg raft.ApplyMsg) {
 					w.WaitCh <- false
 				}
 			}
+			delete(kv.waitOps, msg.Index)
 		}
 
 		DPrintf("KvRaft %v Exe msg %v finish!!", kv.me, msg)

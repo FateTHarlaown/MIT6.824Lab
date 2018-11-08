@@ -140,10 +140,6 @@ func (sm *ShardMaster) dealNoDateRequest(op Op) (wrongLeader bool, err Err) {
 		}
 	}
 
-	sm.mu.Lock()
-	delete(sm.waitOps, index)
-	sm.mu.Unlock()
-
 	return wrongLeader, err
 }
 
@@ -242,6 +238,7 @@ func (sm *ShardMaster) ExeuteApplyMsg(msg raft.ApplyMsg) {
 				w.WaitCh <- false
 			}
 		}
+		delete(sm.waitOps, msg.Index)
 	}
 	DPrintf("sm: %v Exe msg %v finish!!", sm.me, msg)
 }
@@ -321,10 +318,6 @@ func (sm *ShardMaster) applyJoin(args JoinArgs) {
 				break
 			}
 		}
-		/*
-			toGid := i % len(newGid)
-			newConfig.Shards[s] = newGid[toGid]
-		*/
 	}
 
 	newConfig.Num = len(sm.configs)

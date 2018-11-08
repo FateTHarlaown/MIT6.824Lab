@@ -15,6 +15,7 @@ const (
 	ErrWrongGroup   = "ErrWrongGroup"
 	ErrTimeOut      = "ErrTimeOut"
 	ErrLeaderChange = "ErrLeaderChange"
+	ErrDuplicated   = "ErrDuplicated"
 )
 
 const (
@@ -36,8 +37,9 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	ClerkId uint64
-	OpSeq   uint64
+	ClerkId   uint64
+	OpSeq     uint64
+	ConfigNum int
 }
 
 type PutAppendReply struct {
@@ -48,8 +50,9 @@ type PutAppendReply struct {
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
-	ClerkId uint64
-	OpSeq   uint64
+	ClerkId   uint64
+	OpSeq     uint64
+	ConfigNum int
 }
 
 type GetReply struct {
@@ -64,7 +67,9 @@ type MigrationArgs struct {
 }
 
 type MigrationReply struct {
-	Shard int
-	KV    map[string]string
-	Err   Err
+	ConfigNum int
+	Shard     int
+	KV        map[string]string
+	OpSeq     map[uint64]uint64
+	Err       Err
 }

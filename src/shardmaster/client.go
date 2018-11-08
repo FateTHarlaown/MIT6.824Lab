@@ -47,7 +47,6 @@ func (ck *Clerk) Query(num int) Config {
 	args.OpSeq = nextSeq
 	for i := 0; ; i++ {
 		var reply QueryReply
-		DPrintf("clinet %v enter Query: args:%v", ck.id, args)
 		nextSrv := (ck.leaderId + i) % len(ck.servers)
 		ok := ck.servers[nextSrv].Call("ShardMaster.Query", args, &reply)
 		if ok && !reply.WrongLeader && reply.Err == OK {

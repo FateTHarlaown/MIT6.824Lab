@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"labrpc"
+	"log"
 	"raft"
 	"shardmaster"
 	"sync"
@@ -15,7 +16,7 @@ import (
 const (
 	TIMEOUT      = 600
 	POLLINTERVAL = 100
-	PULLINTERVAL = 100
+	PULLINTERVAL = 250
 )
 
 type Op struct {
@@ -29,9 +30,14 @@ type Op struct {
 }
 
 type WaitingOp struct {
-	WaitCh  chan bool
+	WaitCh  chan Err
 	ClerkId uint64
 	OpSeq   uint64
+}
+
+type MigrationData struct {
+	KVMap    map[string]string
+	OpSeqMap map[uint64]uint64
 }
 
 type WaitingShard struct {
@@ -57,30 +63,44 @@ type ShardKV struct {
 	pollTimer     *time.Timer
 	pullTimer     *time.Timer
 	PullingShards map[int]int //sahrd -> configNum, shards being pull from others
+	MigratingData map[int]MigrationData
 	waitShards    map[int][]*WaitingShard
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	DPrintf("shardkv %v gid %v get RPC handler be callled, my configs%v, my pulling:%v, args:%v",
+		kv.me, kv.gid, kv.Configs, kv.PullingShards, args)
 	kv.mu.Lock()
-	shard := key2shard(args.Key)
-	if !kv.haveThisShard(shard) {
-		reply.Err = ErrWrongGroup
-		DPrintf("shardkv %v gid %v don't have key %v", kv.me, kv.gid, args.Key)
-		kv.mu.Unlock()
-		return
-	}
 
+	shard := key2shard(args.Key)
 	if kv.keyIsPulling(shard) {
 		w := WaitingShard{
 			WaitCh: make(chan struct{}, 1),
 		}
 		kv.waitShards[shard] = append(kv.waitShards[shard], &w)
 		kv.mu.Unlock()
-		DPrintf("shardkv:%v gid:%v Get op wait:%v because key is pulling shard:%v ", kv.me, kv.gid, w, shard)
-		<-w.WaitCh
+		DPrintf("shardkv %v gid %v Get RPC start to wait because pulling, args %v, shard %v", kv.me, kv.gid, args, shard)
+		timer := time.NewTimer(time.Millisecond * TIMEOUT)
+		select {
+		case <-w.WaitCh:
+			DPrintf("shardkv %v gid %v Get RPC stop wait because notify, args %v, shard %v", kv.me, kv.gid, args, shard)
+		case <-timer.C:
+			DPrintf("shardkv %v gid %v Get RPC stop wait because timeout, args %v, shard %v", kv.me, kv.gid, args, shard)
+			reply.Err = ErrTimeOut
+			return
+		}
+
 		kv.mu.Lock()
 	}
+
+	if !kv.haveThisShard(args.ConfigNum, shard) {
+		reply.Err = ErrWrongGroup
+		DPrintf("shardkv %v gid %v don't have key %v", kv.me, kv.gid, args.Key)
+		kv.mu.Unlock()
+		return
+	}
+
 	kv.mu.Unlock()
 
 	op := Op{
@@ -93,7 +113,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	index, _, isLeader := kv.rf.Start(op)
 	DPrintf("shardkv %v gid %v get handler call raft start return index:%v isleader:%v", kv.me, kv.gid, index, isLeader)
 	waiter := WaitingOp{
-		WaitCh:  make(chan bool, 1),
+		WaitCh:  make(chan Err, 1),
 		ClerkId: args.ClerkId,
 		OpSeq:   args.OpSeq,
 	}
@@ -102,14 +122,14 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Unlock()
 
 	timer := time.NewTimer(time.Millisecond * TIMEOUT)
-	var ok bool
+	var result Err
 	if !isLeader {
 		reply.WrongLeader = true
 	} else {
 		reply.WrongLeader = false
 		select {
-		case ok = <-waiter.WaitCh:
-			if ok {
+		case result = <-waiter.WaitCh:
+			if result == OK {
 				kv.mu.Lock()
 				if val, ok := kv.KVMap[args.Key]; ok {
 					reply.Err = OK
@@ -119,38 +139,47 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 				}
 				kv.mu.Unlock()
 			} else {
-				reply.Err = ErrLeaderChange
+				reply.Err = result
 			}
 		case <-timer.C:
 			reply.Err = ErrTimeOut
 		}
 	}
-
-	kv.mu.Lock()
-	delete(kv.waitOps, index)
-	kv.mu.Unlock()
 }
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	DPrintf("shardkv %v gid %v Put RPC handler be callled, my configs%v, my pulling:%v, args:%v",
+		kv.me, kv.gid, kv.Configs, kv.PullingShards, args)
 	kv.mu.Lock()
-	shard := key2shard(args.Key)
-	if !kv.haveThisShard(shard) {
-		DPrintf("shardkv %v gid %v don't have key %v", kv.me, kv.gid, args.Key)
-		reply.Err = ErrWrongGroup
-		kv.mu.Unlock()
-		return
-	}
 
+	shard := key2shard(args.Key)
 	if kv.keyIsPulling(shard) {
 		w := WaitingShard{
 			WaitCh: make(chan struct{}, 1),
 		}
 		kv.waitShards[shard] = append(kv.waitShards[shard], &w)
 		kv.mu.Unlock()
-		<-w.WaitCh
+		DPrintf("shardkv %v gid %v Put RPC start to wait because pulling, args %v, shard %v", kv.me, kv.gid, args, shard)
+		timer := time.NewTimer(time.Millisecond * TIMEOUT)
+		select {
+		case <-w.WaitCh:
+			DPrintf("shardkv %v gid %v Put RPC stop wait because notify, args %v, shard %v", kv.me, kv.gid, args, shard)
+		case <-timer.C:
+			DPrintf("shardkv %v gid %v Put RPC stop wait because timeout, args %v, shard %v", kv.me, kv.gid, args, shard)
+			reply.Err = ErrTimeOut
+			return
+		}
 		kv.mu.Lock()
 	}
+
+	if !kv.haveThisShard(args.ConfigNum, shard) {
+		DPrintf("shardkv %v gid %v don't have key %v", kv.me, kv.gid, args.Key)
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+
 	kv.mu.Unlock()
 
 	op := Op{
@@ -163,7 +192,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	index, _, isLeader := kv.rf.Start(op)
 	DPrintf("shardkv %v gid %v PutAppend handler call raft start return index:%v isleader:%v", kv.me, kv.gid, index, isLeader)
 	waiter := WaitingOp{
-		WaitCh:  make(chan bool, 1),
+		WaitCh:  make(chan Err, 1),
 		ClerkId: args.ClerkId,
 		OpSeq:   args.OpSeq,
 	}
@@ -172,27 +201,22 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Unlock()
 
 	timer := time.NewTimer(time.Millisecond * TIMEOUT)
-	var ok bool
+	var result Err
 	if !isLeader {
 		reply.WrongLeader = true
 	} else {
 		reply.WrongLeader = false
 		select {
-		case ok = <-waiter.WaitCh:
-			if ok {
+		case result = <-waiter.WaitCh:
+			if result == OK {
 				reply.Err = OK
 			} else {
-				reply.Err = ErrLeaderChange
+				reply.Err = result
 			}
 		case <-timer.C:
 			reply.Err = ErrTimeOut
 		}
 	}
-
-	kv.mu.Lock()
-	delete(kv.waitOps, index)
-	kv.mu.Unlock()
-
 }
 
 //
@@ -243,6 +267,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	gob.Register(shardmaster.Config{})
 	gob.Register(MigrationArgs{})
 	gob.Register(MigrationReply{})
+	gob.Register(MigrationData{})
 
 	kv := new(ShardKV)
 	kv.me = me
@@ -265,6 +290,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.Configs = make([]shardmaster.Config, 1)
 	kv.Configs[0].Groups = map[int][]string{}
 	kv.PullingShards = make(map[int]int)
+	kv.MigratingData = make(map[int]MigrationData)
 	kv.pollTimer = time.NewTimer(time.Millisecond * POLLINTERVAL)
 	kv.pullTimer = time.NewTimer(time.Millisecond * PULLINTERVAL)
 	kv.waitShards = make(map[int][]*WaitingShard)
@@ -288,18 +314,24 @@ func (kv *ShardKV) startPoll() {
 	for {
 		<-kv.pollTimer.C
 		DPrintf("shardkv:%v gid:%v poll master", kv.me, kv.gid)
-		kv.mu.Lock()
-		if _, isLeader := kv.rf.GetState(); !isLeader ||
-			len(kv.PullingShards) != 0 {
+		if _, isLeader := kv.rf.GetState(); !isLeader {
 			kv.pollTimer.Reset(time.Millisecond * POLLINTERVAL)
+			DPrintf("shardkv:%v gid:%v poll master but can't my configs %v my pulling %v", kv.me, kv.gid, kv.Configs, kv.PullingShards)
+			continue
+		}
+
+		kv.mu.Lock()
+		if len(kv.PullingShards) != 0 {
+			kv.pollTimer.Reset(time.Millisecond * POLLINTERVAL)
+			DPrintf("shardkv:%v gid:%v poll master but can't my configs %v my pulling %v", kv.me, kv.gid, kv.Configs, kv.PullingShards)
 			kv.mu.Unlock()
-			//DPrintf("shardkv:%v gid:%v poll master but is not raft leader", kv.me, kv.gid)
 			continue
 		}
 		newConfigNum := len(kv.Configs)
 		kv.mu.Unlock()
+
 		newConfig := kv.getConfigFromMaster(newConfigNum)
-		DPrintf("shardkv:%v gid:%v poll master, and get %v", kv.me, kv.gid, newConfig)
+		DPrintf("shardkv:%v gid:%v poll master, and get %v, my detail info:%v", kv.me, kv.gid, newConfig, kv)
 		if newConfig.Num == newConfigNum {
 			DPrintf("shardkv:%v gid:%v to start the newConfig %v", kv.me, kv.gid, newConfig)
 			op := Op{
@@ -308,7 +340,8 @@ func (kv *ShardKV) startPoll() {
 				Type:    CONFIG,
 				Args:    newConfig,
 			}
-			kv.rf.Start(op)
+			index, term, leader := kv.rf.Start(op)
+			DPrintf("shardkv:%v gid:%v start a config op:%v and result:%v %v %v", kv.me, kv.gid, op, index, term, leader)
 		}
 		kv.pollTimer.Reset(time.Millisecond * POLLINTERVAL)
 	}
@@ -318,9 +351,16 @@ func (kv *ShardKV) startPoll() {
 func (kv *ShardKV) startPull() {
 	for {
 		<-kv.pullTimer.C
+		DPrintf("shardkv:%v gid:%v try to pull", kv.me, kv.gid)
+		if _, isLeader := kv.rf.GetState(); !isLeader {
+			DPrintf("shardkv:%v gid:%v cannot pull, isLeader:%v, my pulling:%v", kv.me, kv.gid, isLeader, kv.PullingShards)
+			kv.pullTimer.Reset(time.Millisecond * PULLINTERVAL)
+			continue
+		}
+
 		kv.mu.Lock()
-		if _, isLeader := kv.rf.GetState(); !isLeader ||
-			len(kv.PullingShards) == 0 {
+		if len(kv.PullingShards) == 0 {
+			DPrintf("shardkv:%v gid:%v cannot pull, my pulling:%v", kv.me, kv.gid, kv.PullingShards)
 			kv.pullTimer.Reset(time.Millisecond * PULLINTERVAL)
 			kv.mu.Unlock()
 			continue
@@ -342,12 +382,13 @@ func (kv *ShardKV) startPull() {
 			<-ch
 			count--
 		}
+
 		kv.pullTimer.Reset(time.Millisecond * PULLINTERVAL)
 	}
 }
 
 func (kv *ShardKV) ExcuteApplyMsg(msg raft.ApplyMsg) {
-	DPrintf("shardkv:%v gid: %v Enter Exe msg:%v", kv.me, kv.gid, msg)
+	DPrintf("shardkv:%v gid:%v Enter Exe msg:%v", kv.me, kv.gid, msg)
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	DPrintf("shardkv:%v gid:%v; Exe msg:%v, my map:%v, my config:%v, my OpSeqMap:%v", kv.me, kv.gid, msg, kv.KVMap, kv.Configs, kv.OpSeqMap)
@@ -364,43 +405,62 @@ func (kv *ShardKV) ExcuteApplyMsg(msg raft.ApplyMsg) {
 			return
 		}
 
+		var result Err = OK
 		if seq, ok := kv.OpSeqMap[op.ClerkId]; !ok || seq < op.Seq {
-			DPrintf("shardkv:%v, start to do Op: %v", kv.me, op)
+			DPrintf("shardkv:%v gid %v, start to do Op: %v", kv.me, kv.gid, op)
+			result = ErrWrongGroup
 			switch op.Type {
-			//'get' don't need to do anything
+			case GET:
+				if getArgs, ok := op.Args.(GetArgs); ok &&
+					getArgs.ConfigNum == len(kv.Configs)-1 {
+					result = OK
+				}
 			case PUT:
-				if putArgs, ok := op.Args.(PutAppendArgs); ok {
+				if putArgs, ok := op.Args.(PutAppendArgs); ok &&
+					putArgs.ConfigNum == len(kv.Configs)-1 {
 					kv.KVMap[putArgs.Key] = putArgs.Value
+					result = OK
 				}
 			case APPEND:
-				if appendArgs, ok := op.Args.(PutAppendArgs); ok {
+				if appendArgs, ok := op.Args.(PutAppendArgs); ok &&
+					appendArgs.ConfigNum == len(kv.Configs)-1 {
 					kv.KVMap[appendArgs.Key] = kv.KVMap[appendArgs.Key] + appendArgs.Value
+					result = OK
 				}
 			case CONFIG: //the ClerkId of Config is always 0 and client start from 1,so it can reach here.
-				if newConfig, ok := op.Args.(shardmaster.Config); ok {
-					DPrintf("kv %v execute add config %v ", kv.me, newConfig)
-					if newConfig.Num == len(kv.Configs) {
-						kv.addNewConfig(newConfig)
-					}
+				if newConfig, ok := op.Args.(shardmaster.Config); ok &&
+					newConfig.Num == len(kv.Configs) {
+					DPrintf("kv %v gid %v execute add config %v ", kv.me, kv.gid, newConfig)
+					kv.addNewConfig(newConfig)
+					result = OK
 				}
 			case MIGRATION:
-				if reply, ok := op.Args.(MigrationReply); ok {
-					DPrintf("kv %v execute migration: %v", kv.me, reply)
-					for k, v := range reply.KV {
-						kv.KVMap[k] = v
-					}
-					delete(kv.PullingShards, reply.Shard)
-					if waiters, ok := kv.waitShards[reply.Shard]; ok {
-						for _, w := range waiters {
-							w.WaitCh <- struct{}{}
+				if reply, ok := op.Args.(MigrationReply); ok &&
+					reply.ConfigNum == len(kv.Configs)-2 {
+					DPrintf("kv %v gid %v execute migration: %v", kv.me, kv.gid, reply)
+					if _, exist := kv.PullingShards[reply.Shard]; exist {
+						for k, v := range reply.KV {
+							kv.KVMap[k] = v
 						}
-						delete(kv.waitShards, reply.Shard)
+						for c, s := range reply.OpSeq {
+							if seq, ok := kv.OpSeqMap[c]; !ok || seq < s {
+								kv.OpSeqMap[c] = s
+							}
+						}
+						delete(kv.PullingShards, reply.Shard)
+						if waiters, ok := kv.waitShards[reply.Shard]; ok {
+							for _, w := range waiters {
+								w.WaitCh <- struct{}{}
+							}
+							delete(kv.waitShards, reply.Shard)
+						}
+						result = OK
 					}
 				}
 			}
 
 			// CONFIG change log need not to notify waiters
-			if op.ClerkId > 0 && op.Seq > 0 {
+			if op.ClerkId > 0 && op.Seq > 0 && result == OK {
 				kv.OpSeqMap[op.ClerkId] = op.Seq
 			}
 
@@ -415,31 +475,34 @@ func (kv *ShardKV) ExcuteApplyMsg(msg raft.ApplyMsg) {
 		if waiters, ok := kv.waitOps[msg.Index]; ok {
 			for _, w := range waiters {
 				if w.ClerkId == op.ClerkId && w.OpSeq == op.Seq {
-					w.WaitCh <- true
+					w.WaitCh <- result
 				} else {
-					w.WaitCh <- false
+					w.WaitCh <- ErrLeaderChange
 				}
 			}
+			delete(kv.waitOps, msg.Index)
 		}
 
-		DPrintf("shardkv %v Exe msg %v finish!, my kv:%v, my config: %v", kv.me, msg, kv.KVMap, kv.Configs)
+		DPrintf("shardkv:%v gid:%v Exe msg %v finish!, my kv:%v, my config: %v", kv.me, kv.gid, msg, kv.KVMap, kv.Configs)
 	}
 }
 
 func (kv *ShardKV) SaveSnapshot(index int, data []byte) {
-	DPrintf("save snapshot")
-	DPrintf("call rf save snapshot")
+	DPrintf("shardkv:%v gid:%v save snapshot", kv.me, kv.gid)
+	DPrintf("shardkv:%v gid:%v call rf save snapshot", kv.me, kv.gid)
 	kv.rf.SaveSnapshot(data, index)
-	DPrintf("save snapshot finish")
+	DPrintf("shardkv:%v gid:%v save snapshot finish", kv.me, kv.gid)
 }
 
 func (kv *ShardKV) encodeKVData(index int, term int) []byte {
 	buf := new(bytes.Buffer)
 	encoder := gob.NewEncoder(buf)
+	DPrintf("shardkv:%v gid:%v encode data my map:%v my config:%v", kv.me, kv.gid, kv.KVMap, kv.Configs)
 	encoder.Encode(kv.KVMap)
 	encoder.Encode(kv.OpSeqMap)
 	encoder.Encode(kv.Configs)
 	encoder.Encode(kv.PullingShards)
+	encoder.Encode(kv.MigratingData)
 	encoder.Encode(index)
 	encoder.Encode(term)
 	data := buf.Bytes()
@@ -447,31 +510,71 @@ func (kv *ShardKV) encodeKVData(index int, term int) []byte {
 }
 
 func (kv *ShardKV) ReadSnapshot() {
-	DPrintf("read snapshot")
+	DPrintf("shardkv:%v gid:%v read snapshot", kv.me, kv.gid)
 	data := kv.rf.ReadSnapshot()
 	kv.UpdateBySnapshot(data)
 }
 
 func (kv *ShardKV) UpdateBySnapshot(data []byte) {
-	DPrintf("update by snapshot")
+	DPrintf("shardkv:%v gid:%v update by snapshot", kv.me, kv.gid)
 	if data == nil || len(data) < 1 {
 		DPrintf("have no snapshot, return")
+		return
 	}
+	DPrintf("shardkv:%v gid:%v update by snapshot!", kv.me, kv.gid)
 	buf := bytes.NewBuffer(data)
 	decoder := gob.NewDecoder(buf)
-	decoder.Decode(&kv.KVMap)
-	decoder.Decode(&kv.OpSeqMap)
-	decoder.Decode(&kv.Configs)
-	decoder.Decode(&kv.PullingShards)
+
+	tmpKVMap := make(map[string]string)
+	err := decoder.Decode(&tmpKVMap)
+	if err != nil {
+		log.Fatal("read kvmap fatal!")
+	}
+	kv.KVMap = tmpKVMap
+
+	tmpOpSeq := make(map[uint64]uint64)
+	err = decoder.Decode(&tmpOpSeq)
+	if err != nil {
+		log.Fatal("read OpSeqMap fatal!")
+	}
+	kv.OpSeqMap = tmpOpSeq
+
+	tmpConf := make([]shardmaster.Config, 0)
+	err = decoder.Decode(&tmpConf)
+	if err != nil {
+		log.Fatal("read config snapshot fatal!")
+	}
+	kv.Configs = tmpConf
+
+	tmpPulling := make(map[int]int)
+	err = decoder.Decode(&tmpPulling)
+	if err != nil {
+		DPrintf("err:%v", err)
+		log.Fatal("read pullingShards snapshot fatal!")
+	}
+	kv.PullingShards = tmpPulling
+
+	tmpMigrating := make(map[int]MigrationData)
+	err = decoder.Decode(&tmpMigrating)
+	if err != nil {
+		DPrintf("err:%v", err)
+		log.Fatal("read MigratingData snapshot fatal!")
+	}
+	kv.MigratingData = tmpMigrating
+
+	DPrintf("shardkv %v gid %v after update bu snapshot, KV:%v, OpSeq:%v, Configs:%v, Pulling:%v", kv.me, kv.gid, kv.KVMap, kv.OpSeqMap, kv.Configs, kv.PullingShards)
 }
 
 func (kv *ShardKV) getConfigFromMaster(num int) shardmaster.Config {
 	return kv.ck.Query(num)
 }
 
-func (kv *ShardKV) haveThisShard(shard int) bool {
-	config := kv.Configs[len(kv.Configs)-1]
-	return config.Shards[shard] == kv.gid
+func (kv *ShardKV) haveThisShard(configNum int, shard int) bool {
+	myConfig := kv.Configs[len(kv.Configs)-1]
+	if myConfig.Num == configNum {
+		return myConfig.Shards[shard] == kv.gid
+	}
+	return false
 }
 
 func (kv *ShardKV) keyIsPulling(shard int) bool {
@@ -483,12 +586,31 @@ func (kv *ShardKV) keyIsPulling(shard int) bool {
 func (kv *ShardKV) addNewConfig(newConfig shardmaster.Config) {
 	oldConfig := kv.Configs[len(kv.Configs)-1]
 	kv.Configs = append(kv.Configs, newConfig)
+	// prepare the shard to pull from others
 	for shard, gid := range newConfig.Shards {
 		if kv.gid == gid &&
 			kv.gid != oldConfig.Shards[shard] &&
 			oldConfig.Shards[shard] != 0 {
 			kv.PullingShards[shard] = oldConfig.Num
 		}
+	}
+	// prepare the data for others to pull
+	mi := MigrationData{
+		KVMap:    make(map[string]string),
+		OpSeqMap: make(map[uint64]uint64),
+	}
+	for key, val := range kv.KVMap {
+		shard := key2shard(key)
+		if kv.gid != newConfig.Shards[shard] &&
+			kv.gid == oldConfig.Shards[shard] {
+			mi.KVMap[key] = val
+		}
+	}
+	if len(mi.KVMap) != 0 {
+		for id, op := range kv.OpSeqMap {
+			mi.OpSeqMap[id] = op
+		}
+		kv.MigratingData[oldConfig.Num] = mi
 	}
 }
 
@@ -500,47 +622,78 @@ func (kv *ShardKV) pullShard(shard int, oldConfig shardmaster.Config) {
 		ConfigNum: oldConfig.Num,
 	}
 	reply := &MigrationReply{}
+
 	for i := 0; ; i++ {
-		end := kv.make_end(servers[i%len(servers)])
+		nextSvr := i % len(servers)
+		DPrintf("shardkv %v begin Migration call args:%v", kv.me, kv.gid, args)
+		end := kv.make_end(servers[nextSvr])
 		ok := end.Call("ShardKV.Migration", args, reply)
 		if ok && reply.Err == OK {
 			DPrintf("shardkv %v gid %v get Migration reply:%v", kv.me, kv.gid, reply)
 			break
 		} else if ok && reply.Err == ErrWrongGroup {
+			DPrintf("shardkv %v gid %v Migration call %v get wrong group", kv.me, kv.gid, servers[nextSvr])
 			return
 		}
 	}
+	/*
+		for _, server := range servers {
+			end := kv.make_end(server)
+			DPrintf("shardkv %v begin Migration call args:%v", kv.me, kv.gid, args)
+			ok := end.Call("ShardKV.Migration", args, reply)
+			if ok && reply.Err == OK {
+				DPrintf("shardkv %v gid %v get Migration reply:%v", kv.me, kv.gid, reply)
+				break
+			} else if ok && reply.Err == ErrWrongGroup {
+				DPrintf("shardkv %v gid %v Migration call %v get wrong group", kv.me, kv.gid, server)
+				return
+			}
+		}
+	*/
 
-	op := Op{
-		ClerkId: 0,
-		Seq:     0,
-		Type:    MIGRATION,
-		Args:    *reply,
+	if reply.Err == OK {
+		op := Op{
+			ClerkId: 0,
+			Seq:     0,
+			Type:    MIGRATION,
+			Args:    *reply,
+		}
+		_, _, isLeader := kv.rf.Start(op)
+		DPrintf("shardkv %v gid %v try start Migration reply:%v, isLeader%v", kv.me, kv.gid, reply, isLeader)
 	}
-	kv.rf.Start(op)
 }
 
 // the Migration RPC handler
 func (kv *ShardKV) Migration(args *MigrationArgs, reply *MigrationReply) {
+	DPrintf("shardkv:%v gid:%v get a Migration call Args:%v", kv.me, kv.gid, args)
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
-	// args.ConfigNum must is not the latest config
+	// args.ConfigNum must is not the latest config and this kv must prepared the data
 	if args.ConfigNum >= len(kv.Configs)-1 ||
 		kv.Configs[args.ConfigNum].Shards[args.Shard] != kv.gid {
 		reply.Err = ErrWrongGroup
+		DPrintf("shardkv:%v gid:%v set a Migration reply:%v", kv.me, kv.gid, reply)
+		return
 	}
 
+	DPrintf("shardkv:%v gid:%v start a Migration call Args:%v", kv.me, kv.gid, args)
 	reply.KV = make(map[string]string)
-	for k, v := range kv.KVMap {
-		shard := key2shard(k)
-		if shard == args.Shard {
-			reply.KV[k] = v
+	reply.OpSeq = make(map[uint64]uint64)
+	if mi, ok := kv.MigratingData[args.ConfigNum]; ok {
+		for k, v := range mi.KVMap {
+			shard := key2shard(k)
+			if shard == args.Shard {
+				reply.KV[k] = v
+			}
+		}
+		for c, s := range mi.OpSeqMap {
+			reply.OpSeq[c] = s
 		}
 	}
 
 	reply.Shard = args.Shard
+	reply.ConfigNum = args.ConfigNum
 	reply.Err = OK
-	DPrintf("shardkv %v gid %v set a Migration reply:%v", kv.me, kv.gid, reply)
-
+	DPrintf("shardkv:%v gid:%v set a Migration reply:%v", kv.me, kv.gid, reply)
 }

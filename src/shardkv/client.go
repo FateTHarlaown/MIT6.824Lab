@@ -84,6 +84,7 @@ func (ck *Clerk) Get(key string) string {
 	ck.config = ck.sm.Query(-1)
 
 	for {
+		args.ConfigNum = ck.config.Num
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
@@ -96,7 +97,8 @@ func (ck *Clerk) Get(key string) string {
 				if ok && (reply.Err == ErrWrongGroup) {
 					break
 				}
-				if ok && reply.WrongLeader == false && (reply.Err == OK || reply.Err == ErrNoKey) {
+				if ok && reply.WrongLeader == false &&
+					(reply.Err == OK || reply.Err == ErrNoKey) {
 					return reply.Value
 				}
 			}
@@ -123,15 +125,18 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ck.config = ck.sm.Query(-1)
 
 	for {
+		args.ConfigNum = ck.config.Num
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply PutAppendReply
-				DPrintf("ck %v call put arg: %v, to shard %v", ck.id, args, shard)
+				DPrintf("ck %v call put arg: %v, to shard %v, call server: %v", ck.id, args, shard, servers[si])
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
-				if ok && reply.WrongLeader == false && reply.Err == OK {
+				if ok && !reply.WrongLeader &&
+					(reply.Err == OK || reply.Err == ErrDuplicated) {
+					DPrintf("ck %v call put arg: %v, to shard %v, call server: %v have got ok, so return!", ck.id, args, shard, servers[si])
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {
